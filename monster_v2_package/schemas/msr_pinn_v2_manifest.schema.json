@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/msr_pinn_v2_manifest.schema.json",
+  "title": "MSR PINN V2 Dataset Manifest",
+  "type": "object",
+  "required": [
+    "dataset_name",
+    "dataset_version",
+    "sample_schema",
+    "sample_count",
+    "field_sample_count",
+    "design_variables",
+    "mesh_policy",
+    "normalization_policy",
+    "splits",
+    "provenance"
+  ],
+  "properties": {
+    "dataset_name": {
+      "type": "string"
+    },
+    "dataset_version": {
+      "type": "string"
+    },
+    "sample_schema": {
+      "type": "string"
+    },
+    "sample_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "field_sample_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "design_variables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "mesh_policy": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "nr": {
+          "type": "integer"
+        },
+        "nz": {
+          "type": "integer"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "normalization_policy": {
+      "type": "object",
+      "required": [
+        "field_rule",
+        "scalar_rule"
+      ],
+      "properties": {
+        "field_rule": {
+          "type": "string"
+        },
+        "scalar_rule": {
+          "type": "string"
+        },
+        "physical_flux_storage": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "sampling_policy": {
+      "type": "object",
+      "properties": {
+        "global_random_fraction": {
+          "type": "number"
+        },
+        "near_critical_fraction": {
+          "type": "number"
+        },
+        "temperature_sweep_fraction": {
+          "type": "number"
+        },
+        "geometry_sweep_fraction": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "splits": {
+      "type": "object",
+      "required": [
+        "train",
+        "val",
+        "test"
+      ],
+      "properties": {
+        "train": {
+          "type": "number"
+        },
+        "val": {
+          "type": "number"
+        },
+        "test": {
+          "type": "number"
+        },
+        "held_out_geometry_bands": {
+          "type": "array"
+        },
+        "held_out_temperature_bands": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    },
+    "benchmarks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "generator",
+        "source_documents"
+      ],
+      "properties": {
+        "generator": {
+          "type": "string"
+        },
+        "source_documents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

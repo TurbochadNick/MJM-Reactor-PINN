@@ -1,0 +1,46 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build / C++
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+*.o
+*.obj
+*.so
+*.dylib
+*.a
+*.out
+
+# JAX / arrays / artifacts
+*.npz
+*.npy
+*.pt
+*.ckpt
+*.onnx
+artifacts/
+outputs/
+checkpoints/
+logs/
+
+# Local env
+.env
+.env.*

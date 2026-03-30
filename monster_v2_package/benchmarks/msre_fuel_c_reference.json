@@ -1,0 +1,157 @@
+{
+  "source": {
+    "document": "ORNL-TM-730",
+    "title": "MSRE Design and Operations Report, Part III. Nuclear Analysis",
+    "primary_case": "Fuel C"
+  },
+  "fuel_c": {
+    "composition": {
+      "salt_mol_percent": {
+        "LiF": 65.0,
+        "BeF2": 29.2,
+        "ZrF4": 5.0,
+        "UF4": 0.8
+      },
+      "uranium_atom_percent": {
+        "U234": 0.3,
+        "U235": 35.0,
+        "U236": 0.3,
+        "U238": 64.4
+      },
+      "density_lb_ft3_at_1200F": 142.7
+    },
+    "geometry": {
+      "reference_fuel_volume_fraction": 0.225,
+      "reference_graphite_volume_fraction": 0.775,
+      "delayed_neutron_model_radius_in": 27.75,
+      "delayed_neutron_model_height_in": 68.9,
+      "delayed_neutron_model_fuel_volume_ft3": 25.0
+    },
+    "reactivity_coefficients": {
+      "fuel_temperature_per_degF": -3.28e-05,
+      "graphite_temperature_per_degF": -3.68e-05,
+      "total_temperature_per_degF": -6.96e-05,
+      "fuel_temperature_pcm_per_K": -5.904,
+      "graphite_temperature_pcm_per_K": -6.624,
+      "total_temperature_pcm_per_K": -12.528,
+      "fuel_salt_density_coefficient": 0.182,
+      "graphite_density_coefficient": 0.767
+    },
+    "thermal_fluxes_at_10MW": {
+      "maximum_n_cm2_s": 3.29e13,
+      "average_graphite_moderated_n_cm2_s": 1.42e13,
+      "average_circulating_fuel_n_cm2_s": 3.98e12
+    },
+    "delayed_neutrons": {
+      "flow_rate_gpm": 1200.0,
+      "core_residence_s": 9.37,
+      "external_loop_residence_s": 16.45,
+      "thermal_diffusion_length_sq_cm": 210.0,
+      "total_precursor_yield": 0.00641,
+      "beta_eff_static": 0.00666,
+      "beta_eff_circulating": 0.00362,
+      "beta_ratio_circulating_to_static": 0.5435435435435435,
+      "groups": [
+        {
+          "group": 1,
+          "half_life_s": 55.7,
+          "beta_i": 0.000211,
+          "mean_energy_MeV": 0.25,
+          "age_cm2": 256.0,
+          "beta_i_star_static": 0.000223,
+          "beta_i_star_circulating": 0.000052
+        },
+        {
+          "group": 2,
+          "half_life_s": 22.7,
+          "beta_i": 0.001402,
+          "mean_energy_MeV": 0.46,
+          "age_cm2": 266.0,
+          "beta_i_star_static": 0.001457,
+          "beta_i_star_circulating": 0.000373
+        },
+        {
+          "group": 3,
+          "half_life_s": 6.22,
+          "beta_i": 0.001254,
+          "mean_energy_MeV": 0.40,
+          "age_cm2": 264.0,
+          "beta_i_star_static": 0.001307,
+          "beta_i_star_circulating": 0.000499
+        },
+        {
+          "group": 4,
+          "half_life_s": 2.30,
+          "beta_i": 0.002528,
+          "mean_energy_MeV": 0.45,
+          "age_cm2": 266.0,
+          "beta_i_star_static": 0.002628,
+          "beta_i_star_circulating": 0.001698
+        },
+        {
+          "group": 5,
+          "half_life_s": 0.61,
+          "beta_i": 0.00074,
+          "mean_energy_MeV": 0.52,
+          "age_cm2": 269.0,
+          "beta_i_star_static": 0.000766,
+          "beta_i_star_circulating": 0.000718
+        },
+        {
+          "group": 6,
+          "half_life_s": 0.23,
+          "beta_i": 0.00027,
+          "mean_energy_MeV": 0.50,
+          "age_cm2": 268.0,
+          "beta_i_star_static": 0.00028,
+          "beta_i_star_circulating": 0.000277
+        }
+      ]
+    },
+    "kinetics": {
+      "prompt_neutron_lifetime_s": 2.4e-04
+    },
+    "power_coefficients": {
+      "constant_T_out_pct_delta_k_over_k_per_MW": -0.006,
+      "constant_T_out_pcm_per_MW": -6.0,
+      "constant_mean_T_pct_delta_k_over_k_per_MW": -0.024,
+      "constant_mean_T_pcm_per_MW": -24.0,
+      "hands_off_pct_delta_k_over_k_per_MW": 0.0,
+      "temperatures_at_10MW_degF": {
+        "T_out": 1191.0,
+        "T_in": 1141.0,
+        "T_f_star": 1177.0,
+        "T_g_star": 1221.0
+      }
+    },
+    "control_rods": {
+      "three_rods_in_worth_pct_delta_k_over_k": 5.7
+    },
+    "neutron_balance": {
+      "absorptions_per_1e5_neutrons": {
+        "U235": 51323,
+        "U238": 8967,
+        "salt_other": 5536,
+        "graphite": 796,
+        "INOR": 9682,
+        "total": 76304
+      },
+      "leakage_per_1e5_neutrons": {
+        "top": 2001,
+        "sides": 20623,
+        "bottom": 1072,
+        "total": 23696
+      },
+      "derived_fractions": {
+        "total_leakage_fraction": 0.23696,
+        "side_leakage_fraction": 0.20623
+      }
+    },
+    "cross_section_workflow": {
+      "fast_groups": "GAM-1",
+      "thermal_groups": "THERMOS",
+      "dancoff_effect_note": "Effective surface-to-volume ratio for resonance capture reduced by about 30%",
+      "reference_lattice": "one-region lattice like main core, 22.5 vol% fuel and 77.5 vol% graphite"
+    }
+  }
+}

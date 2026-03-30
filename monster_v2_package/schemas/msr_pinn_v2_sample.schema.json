@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/msr_pinn_v2_sample.schema.json",
+  "title": "MSR PINN V2 Sample",
+  "type": "object",
+  "required": [
+    "sample_id",
+    "inputs",
+    "geometry",
+    "material_properties",
+    "number_densities",
+    "cross_sections",
+    "neutronics",
+    "mesh",
+    "fields",
+    "provenance"
+  ],
+  "properties": {
+    "sample_id": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object",
+      "required": [
+        "enrichment",
+        "uf4_mol_frac",
+        "radius_cm",
+        "height_cm",
+        "temperature_K",
+        "water_vol_frac"
+      ],
+      "properties": {
+        "enrichment": {
+          "type": "number"
+        },
+        "uf4_mol_frac": {
+          "type": "number"
+        },
+        "radius_cm": {
+          "type": "number"
+        },
+        "height_cm": {
+          "type": "number"
+        },
+        "temperature_K": {
+          "type": "number"
+        },
+        "water_vol_frac": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "geometry": {
+      "type": "object",
+      "required": [
+        "aspect_ratio",
+        "core_volume_cm3",
+        "delta_r_cm",
+        "delta_z_cm",
+        "radius_extrap_cm",
+        "height_extrap_cm",
+        "buckling_radial_cm2_inv",
+        "buckling_axial_cm2_inv",
+        "buckling_total_cm2_inv"
+      ],
+      "properties": {
+        "aspect_ratio": {
+          "type": "number"
+        },
+        "core_volume_cm3": {
+          "type": "number"
+        },
+        "surface_area_cm2": {
+          "type": "number"
+        },
+        "delta_r_cm": {
+          "type": "number"
+        },
+        "delta_z_cm": {
+          "type": "number"
+        },
+        "radius_extrap_cm": {
+          "type": "number"
+        },
+        "height_extrap_cm": {
+          "type": "number"
+        },
+        "buckling_radial_cm2_inv": {
+          "type": "number"
+        },
+        "buckling_axial_cm2_inv": {
+          "type": "number"
+        },
+        "buckling_total_cm2_inv": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "material_properties": {
+      "type": "object",
+      "required": [
+        "rho_salt_g_cm3",
+        "cp_J_kgK",
+        "mu_Pa_s",
+        "k_W_mK"
+      ],
+      "properties": {
+        "rho_salt_g_cm3": {
+          "type": "number"
+        },
+        "rho_mix_g_cm3": {
+          "type": "number"
+        },
+        "cp_J_kgK": {
+          "type": "number"
+        },
+        "mu_Pa_s": {
+          "type": "number"
+        },
+        "k_W_mK": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "number_densities": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "cross_sections": {
+      "type": "object",
+      "required": [
+        "D1_cm",
+        "D2_cm",
+        "Sigma_a1_cm1",
+        "Sigma_a2_cm1",
+        "Sigma_s12_cm1",
+        "Sigma_f1_cm1",
+        "Sigma_f2_cm1",
+        "nuSigma_f1_cm1",
+        "nuSigma_f2_cm1",
+        "Sigma_r1_cm1",
+        "chi1",
+        "chi2"
+      ],
+      "properties": {
+        "D1_cm": {
+          "type": "number"
+        },
+        "D2_cm": {
+          "type": "number"
+        },
+        "Sigma_a1_cm1": {
+          "type": "number"
+        },
+        "Sigma_a2_cm1": {
+          "type": "number"
+        },
+        "Sigma_s12_cm1": {
+          "type": "number"
+        },
+        "Sigma_f1_cm1": {
+          "type": "number"
+        },
+        "Sigma_f2_cm1": {
+          "type": "number"
+        },
+        "nuSigma_f1_cm1": {
+          "type": "number"
+        },
+        "nuSigma_f2_cm1": {
+          "type": "number"
+        },
+        "Sigma_r1_cm1": {
+          "type": "number"
+        },
+        "chi1": {
+          "type": "number"
+        },
+        "chi2": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "neutronics": {
+      "type": "object",
+      "required": [
+        "k_eff",
+        "k_inf",
+        "alpha_T_pcm_per_K",
+        "peak_flux_n_cm2_s",
+        "avg_flux_n_cm2_s",
+        "peaking_factor",
+        "peak_power_density_W_cm3"
+      ],
+      "properties": {
+        "k_eff": {
+          "type": "number"
+        },
+        "k_inf": {
+          "type": "number"
+        },
+        "reactivity_pcm": {
+          "type": "number"
+        },
+        "alpha_T_pcm_per_K": {
+          "type": "number"
+        },
+        "beta_eff": {
+          "type": "number"
+        },
+        "prompt_neutron_lifetime_s": {
+          "type": "number"
+        },
+        "peak_flux_n_cm2_s": {
+          "type": "number"
+        },
+        "avg_flux_n_cm2_s": {
+          "type": "number"
+        },
+        "peaking_factor": {
+          "type": "number"
+        },
+        "peak_power_density_W_cm3": {
+          "type": "number"
+        },
+        "avg_power_density_W_cm3": {
+          "type": "number"
+        },
+        "leakage_fraction": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "thermal_hydraulics": {
+      "type": "object",
+      "properties": {
+        "mass_flow_kg_s": {
+          "type": "number"
+        },
+        "vol_flow_m3_s": {
+          "type": "number"
+        },
+        "flow_velocity_m_s": {
+          "type": "number"
+        },
+        "core_residence_s": {
+          "type": "number"
+        },
+        "loop_transit_s": {
+          "type": "number"
+        },
+        "Re": {
+          "type": "number"
+        },
+        "Pr": {
+          "type": "number"
+        },
+        "T_inlet_K": {
+          "type": "number"
+        },
+        "T_outlet_K": {
+          "type": "number"
+        },
+        "deltaT_K": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "mesh": {
+      "type": "object",
+      "required": [
+        "nr",
+        "nz",
+        "r_centers_cm",
+        "z_centers_cm"
+      ],
+      "properties": {
+        "nr": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "nz": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "r_centers_cm": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "z_centers_cm": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "r_edges_cm": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "z_edges_cm": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "fields": {
+      "type": "object",
+      "required": [
+        "phi1_shape",
+        "phi2_shape",
+        "phi_total_shape",
+        "power_density_W_cm3_shape"
+      ],
+      "properties": {
+        "phi1_shape": {
+          "type": "array"
+        },
+        "phi2_shape": {
+          "type": "array"
+        },
+        "phi_total_shape": {
+          "type": "array"
+        },
+        "phi1_phys_n_cm2_s": {
+          "type": "array"
+        },
+        "phi2_phys_n_cm2_s": {
+          "type": "array"
+        },
+        "power_density_W_cm3_shape": {
+          "type": "array"
+        },
+        "fission_rate_cm3_s_shape": {
+          "type": "array"
+        },
+        "Jr1_shape": {
+          "type": "array"
+        },
+        "Jz1_shape": {
+          "type": "array"
+        },
+        "Jr2_shape": {
+          "type": "array"
+        },
+        "Jz2_shape": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "solver_version",
+        "xs_source",
+        "bc_type",
+        "normalization_rule"
+      ],
+      "properties": {
+        "solver_version": {
+          "type": "string"
+        },
+        "xs_source": {
+          "type": "string"
+        },
+        "bc_type": {
+          "type": "string"
+        },
+        "normalization_rule": {
+          "type": "string"
+        },
+        "source_document": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
