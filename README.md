@@ -24,6 +24,9 @@ The near-term build target is:
 The repo now includes a first executable benchmark runner:
 
 - `scripts/run_first_pinn.py`
+- `legacy/v1/mjm_solver_v1.py`
+- `legacy/v1/plot_v1.py`
+- `legacy/v1/pinn_training_data.json`
 
 It loads the original v1 solver from the homework notebook, augments the training data with `alpha_T` and buckling features, and trains a first `PINN-lite` surrogate against the 2-group diffusion solver outputs.
 
@@ -34,6 +37,14 @@ MPLCONFIGDIR=/tmp/mplconfig MPLBACKEND=Agg python scripts/run_first_pinn.py
 ```
 
 The generated outputs are written under `artifacts/first_pinn_run/` and are intentionally gitignored.
+
+The original legacy solver/data assets are now preserved in `legacy/v1/`, and the uploaded assessment doc is available at `docs/mjm_assessment.docx` with a repo-local summary in `docs/mjm_assessment_summary.md`.
+
+## Upgrade Handoff
+
+For the next Codex thread, a detailed autonomous upgrade brief is saved at:
+
+- `docs/NEXT_CODEX_UPGRADE_PROMPT.md`
 
 ## Next Implementation Step
 
