@@ -37,6 +37,51 @@ from monster_v2_package.solver_v2 import (
     generate_dataset_v2,
 )
 
+SOLVER_SECTION_EXPLANATIONS = {
+    "legacy_baseline": "Legacy v1 baseline outputs used for before/after comparison.",
+    "upgraded_design": "Upgraded v2 critical-dimension search result for the MJM design point.",
+    "fuel_c_proxy": "Benchmark-centered Fuel C proxy case used for validation against ORNL targets.",
+    "temperature_sweep": "Temperature sweep containing k_eff(T), dk/dT, and alpha_T estimates.",
+    "dataset_records": "Number of exported v2 dataset samples generated in this run.",
+    "targets": "ORNL Fuel C target values used as validation anchors.",
+}
+
+GLOBAL_LABEL_EXPLANATIONS = {
+    "k_eff": "Effective multiplication factor for the finite-cylinder system.",
+    "k_inf": "Infinite-medium multiplication factor from the homogenized 2-group model.",
+    "reactivity_pcm": "Reactivity expressed in pcm using the solved k_eff.",
+    "alpha_T_pcm_per_K": "Temperature coefficient of reactivity in pcm/K.",
+    "peak_flux_n_cm2_s": "Maximum physical total neutron flux.",
+    "peak_thermal_flux_n_cm2_s": "Maximum physical thermal-group flux.",
+    "avg_flux_n_cm2_s": "Volume-averaged total physical flux.",
+    "avg_thermal_flux_n_cm2_s": "Volume-averaged thermal-group physical flux.",
+    "peaking_factor": "Peak total flux divided by average total flux.",
+    "peak_power_density_W_cm3": "Maximum local power density.",
+    "avg_power_density_W_cm3": "Volume-averaged power density.",
+    "power_density_peaking_factor": "Peak-to-average power density ratio.",
+    "beta_static": "Static effective delayed neutron fraction.",
+    "beta_eff": "Circulating-fuel effective delayed neutron fraction.",
+    "beta_eff_ratio": "beta_eff / beta_static for the circulating-fuel case.",
+    "leakage_fraction": "Approximate total leakage fraction diagnostic.",
+    "leakage_top_fraction": "Fraction of estimated leakage through the top boundary.",
+    "leakage_side_fraction": "Fraction of estimated leakage through the radial boundary.",
+    "leakage_bottom_fraction": "Fraction of estimated leakage through the bottom boundary.",
+    "prompt_neutron_lifetime_s": "Prompt neutron lifetime proxy carried from benchmark context.",
+}
+
+DATASET_RECORD_EXPLANATIONS = {
+    "inputs": "Design variables and operating conditions used for the sample.",
+    "geometry": "Derived geometric and buckling quantities, including extrapolated dimensions.",
+    "material_properties": "Thermophysical properties used in the sample.",
+    "number_densities": "Constituent number densities used to build the XS model.",
+    "xs": "Homogenized 2-group macroscopic cross sections and correction factors.",
+    "global_labels": "Scalar reactor-response quantities for validation and learning.",
+    "thermal_hydraulics": "Loop/state-point estimates derived from the solved design.",
+    "mesh": "Spatial grid used for the exported field arrays.",
+    "fields": "2D field arrays for flux, fission rate, and power density.",
+    "provenance": "Normalization, boundary-condition, and source metadata.",
+}
+
 
 def _to_builtin(value):
     if isinstance(value, dict):
@@ -185,6 +230,129 @@ def write_report(
     out_path.write_text("\n".join(lines))
 
 
+def build_solver_bundle(summary: dict) -> dict:
+    fuel_c = summary["fuel_c_proxy"]
+    upgraded = summary["upgraded_design"]
+    bundle = {
+        "overview": {
+            "report_purpose": "Single-file labeled view of the current upgraded solver outputs.",
+            "artifact_root": str(ARTIFACT_DIR.relative_to(ROOT)),
+            "dataset_records": summary["dataset_records"],
+        },
+        "summary_section_definitions": SOLVER_SECTION_EXPLANATIONS,
+        "global_label_definitions": GLOBAL_LABEL_EXPLANATIONS,
+        "dataset_record_layout": DATASET_RECORD_EXPLANATIONS,
+        "summary": summary,
+        "artifact_files": {
+            "upgrade_report_md": str((ARTIFACT_DIR / "upgrade_report.md").relative_to(ROOT)),
+            "summary_json": str((ARTIFACT_DIR / "summary.json").relative_to(ROOT)),
+            "comprehensive_report_md": str((ARTIFACT_DIR / "comprehensive_solver_report.md").relative_to(ROOT)),
+            "bundle_json": str((ARTIFACT_DIR / "full_solver_bundle.json").relative_to(ROOT)),
+            "temperature_plot_png": str((ARTIFACT_DIR / "fuel_c_temperature_sweep.png").relative_to(ROOT)),
+            "field_plot_png": str((ARTIFACT_DIR / "fuel_c_proxy_fields.png").relative_to(ROOT)),
+            "dataset_json": str((ARTIFACT_DIR / "dataset_v2_small.json").relative_to(ROOT)),
+        },
+        "highlights": {
+            "legacy_peak_flux_n_cm2_s": summary["legacy_baseline"]["peak_flux_n_cm2_s"],
+            "upgraded_design_k_eff": upgraded["global_labels"]["k_eff"],
+            "upgraded_design_radius_cm": upgraded["inputs"]["radius_cm"],
+            "fuel_c_alpha_pcm_per_K": summary["temperature_sweep"]["mean_alpha_pcm_per_K"],
+            "fuel_c_beta_ratio": fuel_c["global_labels"]["beta_eff_ratio"],
+            "fuel_c_peak_thermal_flux_n_cm2_s": fuel_c["global_labels"]["peak_thermal_flux_n_cm2_s"],
+        },
+    }
+    return _to_builtin(bundle)
+
+
+def write_comprehensive_solver_report(report_path: Path, bundle: dict) -> None:
+    summary = bundle["summary"]
+    upgraded = summary["upgraded_design"]
+    fuel_c = summary["fuel_c_proxy"]
+    sweep = summary["temperature_sweep"]
+    targets = summary["targets"]
+
+    lines = [
+        "# Comprehensive Solver Output Report",
+        "",
+        "This is the single-file labeled view of the current v2 solver run.",
+        "",
+        "## Overview",
+        "",
+        f"- Artifact root: `{bundle['overview']['artifact_root']}`",
+        f"- Exported dataset records: {bundle['overview']['dataset_records']}",
+        f"- Upgraded MJM critical radius: `{upgraded['inputs']['radius_cm']:.3f} cm`",
+        f"- Upgraded MJM critical height: `{upgraded['inputs']['height_cm']:.3f} cm`",
+        f"- Upgraded MJM `k_eff`: `{upgraded['global_labels']['k_eff']:.5f}`",
+        "",
+        "## What Each Top-Level Summary Section Means",
+        "",
+    ]
+    for key, explanation in bundle["summary_section_definitions"].items():
+        lines.append(f"- `{key}`: {explanation}")
+
+    lines.extend(
+        [
+            "",
+            "## Exported Dataset Record Layout",
+            "",
+        ]
+    )
+    for key, explanation in bundle["dataset_record_layout"].items():
+        lines.append(f"- `{key}`: {explanation}")
+
+    lines.extend(
+        [
+            "",
+            "## Global Label Definitions",
+            "",
+        ]
+    )
+    for key, explanation in bundle["global_label_definitions"].items():
+        lines.append(f"- `{key}`: {explanation}")
+
+    lines.extend(
+        [
+            "",
+            "## Key Solver Results",
+            "",
+            f"- Legacy peak flux: `{summary['legacy_baseline']['peak_flux_n_cm2_s']:.3e} n/cm^2/s`",
+            f"- Upgraded MJM peak flux: `{upgraded['global_labels']['peak_flux_n_cm2_s']:.3e} n/cm^2/s`",
+            f"- Fuel C proxy mean `alpha_T`: `{sweep['mean_alpha_pcm_per_K']:.3f} pcm/K`",
+            f"- ORNL `alpha_T` target: `{targets['alpha_pcm_per_K']:.3f} pcm/K`",
+            f"- Fuel C proxy delayed ratio: `{fuel_c['global_labels']['beta_eff_ratio']:.3f}`",
+            f"- ORNL delayed ratio target: `{targets['beta_ratio']:.3f}`",
+            f"- Fuel C proxy peak thermal flux: `{fuel_c['global_labels']['peak_thermal_flux_n_cm2_s']:.3e}`",
+            f"- ORNL peak thermal flux target: `{targets['peak_thermal_flux_n_cm2_s']:.3e}`",
+            f"- Fuel C proxy `D2`: `{fuel_c['xs']['D2_cm']:.3f} cm`",
+            f"- Fuel C proxy side leakage fraction: `{fuel_c['global_labels']['leakage_side_fraction']:.3f}`",
+            "",
+            "## Temperature Sweep",
+            "",
+            "- The sweep stores temperature, k_eff, k_inf, dk/dT, and alpha_T for each temperature point.",
+            f"- Number of sweep points: {len(sweep['rows'])}",
+            "",
+            "## How To Read The Artifacts",
+            "",
+        ]
+    )
+    for key, path in bundle["artifact_files"].items():
+        lines.append(f"- `{key}`: `{path}`")
+
+    lines.extend(
+        [
+            "",
+            "## Interpretation",
+            "",
+            "- The upgraded solver materially improves temperature-reactivity behavior relative to v1.",
+            "- The upgraded solver makes leakage and buckling explicit rather than implicit.",
+            "- The upgraded solver exports the actual flux and power fields needed for downstream learning.",
+            "- The main remaining gap is flux magnitude, which still indicates cross-section fidelity limitations.",
+            "",
+        ]
+    )
+    report_path.write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -263,6 +431,9 @@ def main() -> None:
         },
     }
     (ARTIFACT_DIR / "summary.json").write_text(json.dumps(_to_builtin(summary), indent=2))
+    solver_bundle = build_solver_bundle(summary)
+    (ARTIFACT_DIR / "full_solver_bundle.json").write_text(json.dumps(solver_bundle, indent=2))
+    write_comprehensive_solver_report(ARTIFACT_DIR / "comprehensive_solver_report.md", solver_bundle)
 
     write_report(
         ARTIFACT_DIR / "upgrade_report.md",

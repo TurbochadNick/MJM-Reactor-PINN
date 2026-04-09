@@ -59,6 +59,33 @@ TARGET_KEYS = [
     "beta_eff_ratio",
 ]
 
+TARGET_EXPLANATIONS = {
+    "k_eff": "Effective multiplication factor for the finite-cylinder core.",
+    "k_inf": "Infinite-medium multiplication factor from the homogenized 2-group model.",
+    "alpha_T_pcm_per_K": "Temperature coefficient of reactivity in pcm/K.",
+    "peaking_factor": "Peak total flux divided by volume-averaged total flux.",
+    "peak_flux_n_cm2_s": "Maximum physical total neutron flux in n/cm^2/s.",
+    "peak_power_density_W_cm3": "Maximum volumetric power density in W/cm^3.",
+    "beta_eff_ratio": "Circulating-to-static delayed neutron ratio, beta_eff / beta_static.",
+}
+
+DATASET_FIELD_EXPLANATIONS = {
+    "sample_id": "Unique sample identifier for the exported v2 record.",
+    "solver_version": "Solver tag used to create the record.",
+    "source_document": "Benchmark/source provenance anchor.",
+    "notes": "Human-readable modeling assumptions and caveats.",
+    "inputs": "Design inputs such as enrichment, UF4 loading, dimensions, and temperatures.",
+    "geometry": "Derived geometry and buckling quantities including extrapolated dimensions.",
+    "material_properties": "Thermophysical properties used in the sample.",
+    "number_densities": "Explicit constituent number densities used to build XS terms.",
+    "xs": "Homogenized 2-group macroscopic cross sections and correction factors.",
+    "global_labels": "Scalar reactor-response outputs used for benchmark comparison and surrogate training.",
+    "thermal_hydraulics": "Simple loop/state-point quantities derived from the solved design.",
+    "mesh": "Mesh size and coordinates used for the field outputs.",
+    "fields": "2D field arrays including phi1, phi2, total flux, fission rate, and power density.",
+    "provenance": "Boundary-condition, normalization, and source metadata.",
+}
+
 
 def to_builtin(value):
     if isinstance(value, dict):
@@ -631,6 +658,169 @@ def save_field_plot(record: dict, y_true: np.ndarray, analytic_pred: np.ndarray,
     plt.close(fig)
 
 
+def load_solver_summary() -> dict | None:
+    summary_path = ROOT / "artifacts" / "solver_v2" / "summary.json"
+    if not summary_path.exists():
+        return None
+    return json.loads(summary_path.read_text())
+
+
+def build_comprehensive_payload(
+    metrics_payload: dict,
+    rows: list[dict],
+    holdout_sample: int,
+    train_idx: np.ndarray,
+    test_idx: np.ndarray,
+) -> dict:
+    solver_summary = load_solver_summary()
+    sample = rows[0]
+    comprehensive = {
+        "overview": {
+            "report_purpose": "Single-file labeled view of the v2 solver-backed PINN run.",
+            "dataset_path": str(DATASET_PATH.relative_to(ROOT)),
+            "n_samples": len(rows),
+            "n_train_samples": int(len(train_idx)),
+            "n_test_samples": int(len(test_idx)),
+            "n_field_points": metrics_payload["n_field_points"],
+            "holdout_sample_id": rows[holdout_sample]["sample_id"],
+            "runtime_seconds": metrics_payload["runtime_seconds"],
+        },
+        "what_the_models_do": {
+            "scalar_baseline": "Plain neural surrogate on raw design inputs only.",
+            "scalar_upgraded": "Physics-guided scalar surrogate using design inputs, buckling, and XS features.",
+            "field_model": "Coordinate-query neural field model predicting phi1(r,z) and phi2(r,z).",
+        },
+        "target_definitions": TARGET_EXPLANATIONS,
+        "dataset_record_layout": DATASET_FIELD_EXPLANATIONS,
+        "example_dataset_record_keys": list(sample.keys()),
+        "example_global_label_keys": list(sample["global_labels"].keys()),
+        "example_field_keys": list(sample["fields"].keys()),
+        "solver_context": solver_summary,
+        "pinn_metrics": metrics_payload,
+        "artifact_files": {
+            "primary_report_md": str((ARTIFACT_DIR / "comprehensive_output_report.md").relative_to(ROOT)),
+            "summary_md": str((ARTIFACT_DIR / "summary.md").relative_to(ROOT)),
+            "metrics_json": str((ARTIFACT_DIR / "metrics.json").relative_to(ROOT)),
+            "scalar_parity_png": str((ARTIFACT_DIR / "scalar_parity.png").relative_to(ROOT)),
+            "scalar_loss_png": str((ARTIFACT_DIR / "scalar_loss.png").relative_to(ROOT)),
+            "field_holdout_png": str((ARTIFACT_DIR / "field_holdout_comparison.png").relative_to(ROOT)),
+        },
+    }
+    return to_builtin(comprehensive)
+
+
+def write_comprehensive_report(report_path: Path, comprehensive: dict) -> None:
+    solver_context = comprehensive.get("solver_context")
+    metrics = comprehensive["pinn_metrics"]
+    lines = [
+        "# Comprehensive PINN Output Report",
+        "",
+        "This is the single-file labeled view of the current v2 solver-backed PINN run.",
+        "",
+        "## Overview",
+        "",
+        f"- Dataset source: `{comprehensive['overview']['dataset_path']}`",
+        f"- Samples: {comprehensive['overview']['n_samples']}",
+        f"- Train/test split: {comprehensive['overview']['n_train_samples']} / {comprehensive['overview']['n_test_samples']}",
+        f"- Field points used by the coordinate-query model: {comprehensive['overview']['n_field_points']}",
+        f"- Holdout sample shown in the field comparison plot: `{comprehensive['overview']['holdout_sample_id']}`",
+        f"- PINN runtime: {comprehensive['overview']['runtime_seconds']:.2f} s",
+        "",
+        "## What Each Model Is",
+        "",
+        f"- Scalar baseline: {comprehensive['what_the_models_do']['scalar_baseline']}",
+        f"- Scalar upgraded: {comprehensive['what_the_models_do']['scalar_upgraded']}",
+        f"- Field model: {comprehensive['what_the_models_do']['field_model']}",
+        "",
+        "## Dataset Layout",
+        "",
+    ]
+    for key, explanation in comprehensive["dataset_record_layout"].items():
+        lines.append(f"- `{key}`: {explanation}")
+
+    lines.extend(
+        [
+            "",
+            "## Scalar Target Definitions",
+            "",
+        ]
+    )
+    for key, explanation in comprehensive["target_definitions"].items():
+        lines.append(f"- `{key}`: {explanation}")
+
+    lines.extend(
+        [
+            "",
+            "## Scalar Metrics",
+            "",
+            "Baseline and upgraded scalar metrics are reported as RMSE / MAE / R^2.",
+            "",
+        ]
+    )
+    for key in TARGET_KEYS:
+        baseline = metrics["scalar_baseline"][key]
+        upgraded = metrics["scalar_upgraded"][key]
+        lines.append(
+            f"- `{key}`: baseline RMSE `{baseline['rmse']:.5g}`, MAE `{baseline['mae']:.5g}`, R^2 `{baseline['r2']:.4f}`"
+        )
+        lines.append(
+            f"  upgraded RMSE `{upgraded['rmse']:.5g}`, MAE `{upgraded['mae']:.5g}`, R^2 `{upgraded['r2']:.4f}`"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Scalar Physics Consistency",
+            "",
+            f"- Baseline criticality-consistency residual: `{metrics['scalar_baseline_residual']:.5f}`",
+            f"- Upgraded criticality-consistency residual: `{metrics['scalar_upgraded_residual']:.5f}`",
+            "- Lower is better. This is the RMSE of `k_eff - k_inf / (1 + M^2 Bg^2)` using the learned scalar model outputs.",
+            "",
+            "## Field Metrics",
+            "",
+            f"- Analytic baseline phi1 RMSE: `{metrics['field_baseline']['phi1_rmse']:.5g}`",
+            f"- Learned field-model phi1 RMSE: `{metrics['field_model']['phi1_rmse']:.5g}`",
+            f"- Analytic baseline phi2 RMSE: `{metrics['field_baseline']['phi2_rmse']:.5g}`",
+            f"- Learned field-model phi2 RMSE: `{metrics['field_model']['phi2_rmse']:.5g}`",
+            "",
+            "## How To Read The Artifact Files",
+            "",
+        ]
+    )
+    for key, path in comprehensive["artifact_files"].items():
+        lines.append(f"- `{key}`: `{path}`")
+
+    if solver_context is not None:
+        fuel_c = solver_context["fuel_c_proxy"]["global_labels"]
+        targets = solver_context["targets"]
+        alpha_value = fuel_c.get("alpha_T_pcm_per_K")
+        if alpha_value is None:
+            alpha_value = solver_context["temperature_sweep"]["mean_alpha_pcm_per_K"]
+        lines.extend(
+            [
+                "",
+                "## Solver Benchmark Snapshot",
+                "",
+                f"- Fuel C proxy `alpha_T`: `{alpha_value:.3f} pcm/K`",
+                f"- ORNL `alpha_T` target: `{targets['alpha_pcm_per_K']:.3f} pcm/K`",
+                f"- Fuel C proxy delayed ratio: `{fuel_c['beta_eff_ratio']:.3f}`",
+                f"- ORNL delayed ratio target: `{targets['beta_ratio']:.3f}`",
+                f"- Fuel C proxy peak thermal flux: `{fuel_c['peak_thermal_flux_n_cm2_s']:.3e}`",
+                f"- ORNL peak thermal flux target: `{targets['peak_thermal_flux_n_cm2_s']:.3e}`",
+                "",
+                "## Interpretation",
+                "",
+                "- The upgraded solver substantially improves temperature-reactivity behavior and D2 plausibility.",
+                "- The field pipeline now has explicit flux-field labels instead of scalar-only supervision.",
+                "- The main remaining solver-level gap is flux magnitude, which still points to cross-section fidelity limits.",
+                "- The main remaining PINN-level gap is scalar robustness on the small dataset, especially for k_eff and beta ratio.",
+                "",
+            ]
+        )
+
+    report_path.write_text("\n".join(lines) + "\n")
+
+
 def write_summary(summary_path: Path, payload: dict) -> None:
     k_eff_baseline = payload["scalar_baseline"]["k_eff"]["rmse"]
     k_eff_upgraded = payload["scalar_upgraded"]["k_eff"]["rmse"]
@@ -781,10 +971,15 @@ def main() -> None:
     }
     (ARTIFACT_DIR / "metrics.json").write_text(json.dumps(to_builtin(metrics_payload), indent=2))
     write_summary(ARTIFACT_DIR / "summary.md", metrics_payload)
+    comprehensive = build_comprehensive_payload(metrics_payload, rows, holdout_sample, train_idx, test_idx)
+    (ARTIFACT_DIR / "full_output_bundle.json").write_text(json.dumps(comprehensive, indent=2))
+    write_comprehensive_report(ARTIFACT_DIR / "comprehensive_output_report.md", comprehensive)
 
     print("\nRun complete.")
     print(f"  summary: {ARTIFACT_DIR / 'summary.md'}")
     print(f"  metrics: {ARTIFACT_DIR / 'metrics.json'}")
+    print(f"  comprehensive report: {ARTIFACT_DIR / 'comprehensive_output_report.md'}")
+    print(f"  output bundle: {ARTIFACT_DIR / 'full_output_bundle.json'}")
     print(f"  scalar parity: {ARTIFACT_DIR / 'scalar_parity.png'}")
     print(f"  field comparison: {ARTIFACT_DIR / 'field_holdout_comparison.png'}")
 
