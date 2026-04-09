@@ -599,18 +599,41 @@ def save_scalar_plots(
     loss_path = ARTIFACT_DIR / "scalar_loss.png"
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.8))
-    pairs = [("k_eff", 0), ("alpha_T_pcm_per_K", 2)]
+    pairs = [
+        ("Reactor Criticality (k_eff)", 0),
+        ("Temperature Feedback (alpha_T, pcm/K)", 2),
+    ]
     for ax, (label, idx) in zip(axes, pairs, strict=True):
         truth = y_true[:, idx]
-        ax.scatter(truth, baseline_pred[:, idx], s=28, alpha=0.75, label="baseline")
-        ax.scatter(truth, upgraded_pred[:, idx], s=28, alpha=0.75, label="upgraded")
+        ax.scatter(truth, baseline_pred[:, idx], s=28, alpha=0.75, label="Baseline model")
+        ax.scatter(
+            truth,
+            upgraded_pred[:, idx],
+            s=28,
+            alpha=0.75,
+            label="Upgraded physics-guided model",
+        )
         lo = min(truth.min(), baseline_pred[:, idx].min(), upgraded_pred[:, idx].min())
         hi = max(truth.max(), baseline_pred[:, idx].max(), upgraded_pred[:, idx].max())
         ax.plot([lo, hi], [lo, hi], "k--", linewidth=1)
         ax.set_title(label)
-        ax.set_xlabel("true")
-        ax.set_ylabel("predicted")
+        ax.set_xlabel("Reference solver value")
+        ax.set_ylabel("Model prediction")
+        ax.text(
+            0.03,
+            0.94,
+            "Dashed line = perfect prediction",
+            transform=ax.transAxes,
+            fontsize=8,
+            va="top",
+            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        )
         ax.legend()
+    fig.suptitle(
+        "Prediction Accuracy For Two Key Reactor Metrics",
+        fontsize=13,
+        y=1.02,
+    )
     fig.tight_layout()
     fig.savefig(parity_path, dpi=180)
     plt.close(fig)
@@ -639,20 +662,52 @@ def save_scalar_plots(
 def save_field_plot(record: dict, y_true: np.ndarray, analytic_pred: np.ndarray, learned_pred: np.ndarray) -> None:
     nr = int(record["mesh"]["nr"])
     nz = int(record["mesh"]["nz"])
+    r = np.asarray(record["mesh"]["r_centers_cm"], dtype=float)
+    z = np.asarray(record["mesh"]["z_centers_cm"], dtype=float)
+    extent = [float(r.min()), float(r.max()), float(z.min()), float(z.max())]
+    phi1_truth = y_true[:, 0].reshape(nr, nz)
+    phi1_analytic = analytic_pred[:, 0].reshape(nr, nz)
+    phi1_learned = learned_pred[:, 0].reshape(nr, nz)
+    phi2_truth = y_true[:, 1].reshape(nr, nz)
+    phi2_analytic = analytic_pred[:, 1].reshape(nr, nz)
+    phi2_learned = learned_pred[:, 1].reshape(nr, nz)
+
+    phi1_min = float(min(phi1_truth.min(), phi1_analytic.min(), phi1_learned.min()))
+    phi1_max = float(max(phi1_truth.max(), phi1_analytic.max(), phi1_learned.max()))
+    phi2_min = float(min(phi2_truth.min(), phi2_analytic.min(), phi2_learned.min()))
+    phi2_max = float(max(phi2_truth.max(), phi2_analytic.max(), phi2_learned.max()))
+
     labels = [
-        ("Truth phi1", y_true[:, 0].reshape(nr, nz)),
-        ("Analytic baseline phi1", analytic_pred[:, 0].reshape(nr, nz)),
-        ("Learned phi1", learned_pred[:, 0].reshape(nr, nz)),
-        ("Truth phi2", y_true[:, 1].reshape(nr, nz)),
-        ("Analytic baseline phi2", analytic_pred[:, 1].reshape(nr, nz)),
-        ("Learned phi2", learned_pred[:, 1].reshape(nr, nz)),
+        ("Reference fast-neutron flux (phi1)", phi1_truth, phi1_min, phi1_max, "Fast flux level"),
+        ("Simple analytic approximation", phi1_analytic, phi1_min, phi1_max, "Fast flux level"),
+        ("Learned fast-flux prediction", phi1_learned, phi1_min, phi1_max, "Fast flux level"),
+        ("Reference thermal-neutron flux (phi2)", phi2_truth, phi2_min, phi2_max, "Thermal flux level"),
+        ("Simple analytic approximation", phi2_analytic, phi2_min, phi2_max, "Thermal flux level"),
+        ("Learned thermal-flux prediction", phi2_learned, phi2_min, phi2_max, "Thermal flux level"),
     ]
 
     fig, axes = plt.subplots(2, 3, figsize=(12.5, 7.2))
-    for ax, (title, field) in zip(axes.flat, labels, strict=True):
-        mesh = ax.imshow(field.T, origin="lower", aspect="auto", cmap="viridis")
+    for ax, (title, field, vmin, vmax, cbar_label) in zip(axes.flat, labels, strict=True):
+        mesh = ax.imshow(
+            field.T,
+            origin="lower",
+            aspect="auto",
+            cmap="viridis",
+            extent=extent,
+            vmin=vmin,
+            vmax=vmax,
+        )
         ax.set_title(title)
-        fig.colorbar(mesh, ax=ax, shrink=0.8)
+        ax.set_xlabel("Radial position (cm)")
+        ax.set_ylabel("Axial position (cm)")
+        cbar = fig.colorbar(mesh, ax=ax, shrink=0.8)
+        cbar.set_label(cbar_label)
+    fig.suptitle(
+        "Flux Field Prediction: Reference Solver vs Simple Approximation vs Learned Model\n"
+        "Brighter colors indicate higher neutron activity",
+        fontsize=13,
+        y=1.01,
+    )
     fig.tight_layout()
     fig.savefig(ARTIFACT_DIR / "field_holdout_comparison.png", dpi=180)
     plt.close(fig)
