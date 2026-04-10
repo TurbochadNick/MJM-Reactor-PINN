@@ -51,6 +51,38 @@ BENCHMARK_STATIC_BETA = FUEL_C["delayed_neutrons"]["beta_eff_static"]
 BENCHMARK_CIRCULATING_BETA = FUEL_C["delayed_neutrons"]["beta_eff_circulating"]
 BENCHMARK_PROMPT_LIFETIME = FUEL_C["kinetics"]["prompt_neutron_lifetime_s"]
 
+# Explicit 2-group interpretation used for reporting, exported metadata, and
+# presentation support. These bounds make the fast/thermal split explicit in the
+# codebase, but the current homogenized XS set is still benchmark-guided rather
+# than transport-regenerated for these exact cutoffs.
+ENERGY_GROUPS = {
+    "group_1_fast": {
+        "symbol": "phi1",
+        "name": "Fast neutron group",
+        "energy_range_eV": {
+            "lower": 1.0e3,
+            "upper": 1.0e7,
+        },
+        "energy_range_text": "approximately 1 keV to 10 MeV",
+        "purpose": "Represents the higher-energy neutron population in the 2-group diffusion model.",
+    },
+    "group_2_thermal": {
+        "symbol": "phi2",
+        "name": "Thermal neutron group",
+        "energy_range_eV": {
+            "lower": 2.5e-2,
+            "upper": 1.0e3,
+        },
+        "energy_range_text": "approximately 0.025 eV to 1 keV",
+        "purpose": "Represents the lower-energy neutron population in the 2-group diffusion model.",
+    },
+    "note": (
+        "These are explicit assumed 2-group reporting bounds for this project. "
+        "The solver cross sections are not transport-regenerated from a library "
+        "tied to these exact cutoffs."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class DelayedNeutronGroupV2:
@@ -792,6 +824,7 @@ def evaluate_design_v2(
 
     result: Dict[str, Any] = {
         "solver_version": "mjm_v2",
+        "energy_groups": ENERGY_GROUPS,
         "params": {
             "enrichment": enrichment,
             "uf4_mol_frac": uf4_mol_frac,
@@ -957,11 +990,13 @@ def export_sample_record(
     record = {
         "sample_id": sample_id,
         "solver_version": result["solver_version"],
+        "energy_groups": result["energy_groups"],
         "source_document": BENCHMARK_DATA["source"]["document"],
         "notes": [
             "legacy v1 salt chemistry retained as a base input model",
             "graphite moderator fraction introduced from ORNL Fuel C benchmark",
             "thermal-group corrections are benchmark-guided, not transport-derived",
+            ENERGY_GROUPS["note"],
         ],
         "inputs": result["params"],
         "geometry": {

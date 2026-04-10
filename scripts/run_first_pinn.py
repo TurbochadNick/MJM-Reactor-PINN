@@ -83,6 +83,7 @@ DATASET_FIELD_EXPLANATIONS = {
     "thermal_hydraulics": "Simple loop/state-point quantities derived from the solved design.",
     "mesh": "Mesh size and coordinates used for the field outputs.",
     "fields": "2D field arrays including phi1, phi2, total flux, fission rate, and power density.",
+    "energy_groups": "Explicit assumed fast/thermal group energy ranges used for reporting and exported metadata.",
     "provenance": "Boundary-condition, normalization, and source metadata.",
 }
 
@@ -734,9 +735,26 @@ def write_comprehensive_report(report_path: Path, comprehensive: dict) -> None:
         f"- Scalar upgraded: {comprehensive['what_the_models_do']['scalar_upgraded']}",
         f"- Field model: {comprehensive['what_the_models_do']['field_model']}",
         "",
-        "## Dataset Layout",
-        "",
     ]
+    if solver_context is not None and "energy_groups" in solver_context:
+        energy_groups = solver_context["energy_groups"]
+        lines.extend(
+            [
+                "## Explicit Two-Group Energy Definitions",
+                "",
+                f"- `phi1` fast group: {energy_groups['group_1_fast']['energy_range_text']}",
+                f"- `phi2` thermal group: {energy_groups['group_2_thermal']['energy_range_text']}",
+                f"- Note: {energy_groups['note']}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Dataset Layout",
+            "",
+        ]
+    )
     for key, explanation in comprehensive["dataset_record_layout"].items():
         lines.append(f"- `{key}`: {explanation}")
 

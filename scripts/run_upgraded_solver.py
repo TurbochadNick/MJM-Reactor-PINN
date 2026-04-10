@@ -39,6 +39,7 @@ from monster_v2_package.solver_v2 import (
 
 SOLVER_SECTION_EXPLANATIONS = {
     "legacy_baseline": "Legacy v1 baseline outputs used for before/after comparison.",
+    "energy_groups": "Explicit assumed fast/thermal energy-group definitions used for reporting and exported metadata.",
     "upgraded_design": "Upgraded v2 critical-dimension search result for the MJM design point.",
     "fuel_c_proxy": "Benchmark-centered Fuel C proxy case used for validation against ORNL targets.",
     "temperature_sweep": "Temperature sweep containing k_eff(T), dk/dT, and alpha_T estimates.",
@@ -293,6 +294,12 @@ def write_comprehensive_solver_report(report_path: Path, bundle: dict) -> None:
     lines.extend(
         [
             "",
+            "## Explicit Two-Group Energy Definitions",
+            "",
+            f"- `phi1` fast group: {summary['energy_groups']['group_1_fast']['energy_range_text']}",
+            f"- `phi2` thermal group: {summary['energy_groups']['group_2_thermal']['energy_range_text']}",
+            f"- Note: {summary['energy_groups']['note']}",
+            "",
             "## Exported Dataset Record Layout",
             "",
         ]
@@ -418,6 +425,7 @@ def main() -> None:
             "peak_power_density_W_cm3": legacy_baseline["peak_power_density_W_cm3"],
             "peaking_factor": legacy_baseline["peaking_factor"],
         },
+        "energy_groups": upgraded_design["energy_groups"],
         "upgraded_design": export_sample_record(upgraded_design, sample_id="mjm-critical"),
         "fuel_c_proxy": export_sample_record(fuel_c_result, sample_id="fuel-c-proxy"),
         "temperature_sweep": sweep,
