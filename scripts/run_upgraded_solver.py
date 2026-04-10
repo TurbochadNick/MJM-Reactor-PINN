@@ -147,6 +147,91 @@ def plot_fields(result: dict, out_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_leu_design_space(out_path: Path) -> dict:
+    enrichment_vals = np.linspace(0.03, 0.05, 11)
+    radius_vals = np.linspace(50.0, 100.0, 13)
+    kmap = np.zeros((len(enrichment_vals), len(radius_vals)), dtype=float)
+
+    for i, enr in enumerate(enrichment_vals):
+        for j, radius_cm in enumerate(radius_vals):
+            result = evaluate_design_v2(
+                enrichment=float(enr),
+                uf4_mol_frac=0.04,
+                radius_cm=float(radius_cm),
+                height_cm=float(2.0 * radius_cm),
+                temperature_k=900.0,
+                water_vol_frac=0.0,
+                nr=18,
+                nz=28,
+            )
+            kmap[i, j] = result["k_eff"]
+
+    critical_leu = find_critical_radius_v2(
+        k_target=1.0,
+        aspect_ratio=2.0,
+        enrichment=0.05,
+        uf4_mol_frac=0.04,
+        temperature_k=900.0,
+        water_vol_frac=0.0,
+        r_bounds_cm=(60.0, 120.0),
+    )
+
+    fig, ax = plt.subplots(figsize=(10.5, 7.2))
+    rr, ee = np.meshgrid(radius_vals, enrichment_vals * 100.0)
+    mesh = ax.pcolormesh(rr, ee, kmap, cmap="RdYlGn", shading="gouraud", vmin=0.5, vmax=1.2)
+    cbar = fig.colorbar(mesh, ax=ax)
+    cbar.set_label("k_eff")
+
+    contour_levels = [1.0, 1.03]
+    try:
+        cs = ax.contour(rr, ee, kmap, levels=contour_levels, colors=["white", "#ffd166"], linewidths=[2.2, 1.8])
+        ax.clabel(cs, fmt={1.0: "k=1.0", 1.03: "k=1.03"}, fontsize=9)
+    except Exception:
+        pass
+
+    ax.plot(
+        critical_leu["critical_radius_cm"],
+        5.0,
+        marker="*",
+        markersize=18,
+        color="#c1121f",
+        label="LEU critical point (5.0% enrichment)",
+    )
+    ax.axhline(5.0, color="#003049", linestyle="--", linewidth=1.5, label="LEU upper limit (5.0%)")
+    ax.set_title(
+        "LEU Design Space: k_eff(Enrichment, Radius)\n"
+        "10 MW(th) | FLiBe + 4% UF4 | H=2R | 900 K",
+        fontsize=13,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Core radius (cm)")
+    ax.set_ylabel("Enrichment (%)")
+    ax.set_ylim(enrichment_vals.min() * 100.0, enrichment_vals.max() * 100.0)
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
+
+    return {
+        "radius_cm_values": radius_vals.tolist(),
+        "enrichment_percent_values": (enrichment_vals * 100.0).tolist(),
+        "k_eff_map": kmap.tolist(),
+        "critical_point": {
+            "enrichment_percent": 5.0,
+            "radius_cm": critical_leu["critical_radius_cm"],
+            "height_cm": critical_leu["critical_height_cm"],
+            "k_eff": critical_leu["k_eff"],
+        },
+        "assumptions": {
+            "uf4_mol_frac": 0.04,
+            "aspect_ratio": 2.0,
+            "temperature_K": 900.0,
+            "water_vol_frac": 0.0,
+        },
+    }
+
+
 def write_report(
     out_path: Path,
     *,
@@ -251,6 +336,7 @@ def build_solver_bundle(summary: dict) -> dict:
             "bundle_json": str((ARTIFACT_DIR / "full_solver_bundle.json").relative_to(ROOT)),
             "temperature_plot_png": str((ARTIFACT_DIR / "fuel_c_temperature_sweep.png").relative_to(ROOT)),
             "field_plot_png": str((ARTIFACT_DIR / "fuel_c_proxy_fields.png").relative_to(ROOT)),
+            "leu_design_space_png": str((ARTIFACT_DIR / "leu_design_space.png").relative_to(ROOT)),
             "dataset_json": str((ARTIFACT_DIR / "dataset_v2_small.json").relative_to(ROOT)),
         },
         "highlights": {
@@ -338,6 +424,12 @@ def write_comprehensive_solver_report(report_path: Path, bundle: dict) -> None:
             "- The sweep stores temperature, k_eff, k_inf, dk/dT, and alpha_T for each temperature point.",
             f"- Number of sweep points: {len(sweep['rows'])}",
             "",
+            "## LEU Design Space",
+            "",
+            f"- Dedicated LEU map generated at `UF4 = 4 mol%`, `H = 2R`, and `T = 900 K`.",
+            f"- LEU critical point at 5.0% enrichment: `R = {summary['leu_design_space']['critical_point']['radius_cm']:.2f} cm`, `H = {summary['leu_design_space']['critical_point']['height_cm']:.2f} cm`.",
+            "- This figure is intended for the explicit LEU presentation case and keeps the enrichment axis entirely within the LEU regime.",
+            "",
             "## How To Read The Artifacts",
             "",
         ]
@@ -417,6 +509,7 @@ def main() -> None:
 
     plot_temperature_sweep(sweep, ARTIFACT_DIR / "fuel_c_temperature_sweep.png")
     plot_fields(fuel_c_result, ARTIFACT_DIR / "fuel_c_proxy_fields.png")
+    leu_design_space = plot_leu_design_space(ARTIFACT_DIR / "leu_design_space.png")
 
     summary = {
         "legacy_baseline": {
@@ -429,6 +522,7 @@ def main() -> None:
         "upgraded_design": export_sample_record(upgraded_design, sample_id="mjm-critical"),
         "fuel_c_proxy": export_sample_record(fuel_c_result, sample_id="fuel-c-proxy"),
         "temperature_sweep": sweep,
+        "leu_design_space": leu_design_space,
         "dataset_records": len(dataset),
         "targets": {
             "alpha_pcm_per_K": ALPHA_TARGET_PCM_PER_K,
