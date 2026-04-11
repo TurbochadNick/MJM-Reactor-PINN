@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from monster_v2_package.solver_v2 import generate_dataset_v2
+from monster_v2_package.solver_v2 import LEU_MAX_ENRICHMENT, LEU_MIN_ENRICHMENT, generate_dataset_v2
 
 
 DATASET_PATH = ROOT / "artifacts" / "solver_v2" / "dataset_v2_small.json"
@@ -108,7 +108,14 @@ def load_dataset(dataset_path: Path, n_samples: int = 24) -> list[dict]:
         generate_dataset_v2(dataset_path, n_samples=n_samples, seed=42)
 
     rows = json.loads(dataset_path.read_text())
+    needs_regen = False
     if rows and rows[0]["global_labels"].get("alpha_T_pcm_per_K") is None:
+        needs_regen = True
+    if rows:
+        enrichments = [float(row["inputs"]["enrichment"]) for row in rows]
+        if min(enrichments) < LEU_MIN_ENRICHMENT - 1.0e-12 or max(enrichments) > LEU_MAX_ENRICHMENT + 1.0e-12:
+            needs_regen = True
+    if needs_regen:
         generate_dataset_v2(dataset_path, n_samples=max(n_samples, len(rows)), seed=42)
         rows = json.loads(dataset_path.read_text())
     return rows
@@ -821,6 +828,7 @@ def write_comprehensive_report(report_path: Path, comprehensive: dict) -> None:
                 "",
                 "## Solver Benchmark Snapshot",
                 "",
+                "- Fuel C remains a higher-enrichment benchmark anchor and is not part of the LEU-only PINN training set.",
                 f"- Fuel C proxy `alpha_T`: `{alpha_value:.3f} pcm/K`",
                 f"- ORNL `alpha_T` target: `{targets['alpha_pcm_per_K']:.3f} pcm/K`",
                 f"- Fuel C proxy delayed ratio: `{fuel_c['beta_eff_ratio']:.3f}`",
@@ -857,6 +865,7 @@ def write_summary(summary_path: Path, payload: dict) -> None:
         f"- Samples: {payload['n_samples']}",
         f"- Field points: {payload['n_field_points']}",
         "- Data source: `artifacts/solver_v2/dataset_v2_small.json`",
+        f"- Enrichment regime: LEU-only `{LEU_MIN_ENRICHMENT*100:.1f}%` to `{LEU_MAX_ENRICHMENT*100:.1f}%`",
         "- Inputs: benchmark-aware geometry, buckling, and XS features plus spatial coordinates for fields",
         "",
         "## Scalar Comparison",

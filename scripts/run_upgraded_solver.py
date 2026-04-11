@@ -471,7 +471,7 @@ def main() -> None:
     upgraded_design = find_critical_radius_v2(
         k_target=1.03,
         aspect_ratio=2.0,
-        enrichment=0.1975,
+        enrichment=0.05,
         uf4_mol_frac=0.04,
         temperature_k=900.0,
         water_vol_frac=0.0,

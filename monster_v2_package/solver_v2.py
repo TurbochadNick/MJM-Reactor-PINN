@@ -50,6 +50,8 @@ DELAYED_RATIO_TARGET = FUEL_C["delayed_neutrons"]["beta_ratio_circulating_to_sta
 BENCHMARK_STATIC_BETA = FUEL_C["delayed_neutrons"]["beta_eff_static"]
 BENCHMARK_CIRCULATING_BETA = FUEL_C["delayed_neutrons"]["beta_eff_circulating"]
 BENCHMARK_PROMPT_LIFETIME = FUEL_C["kinetics"]["prompt_neutron_lifetime_s"]
+LEU_MIN_ENRICHMENT = 0.03
+LEU_MAX_ENRICHMENT = 0.05
 
 # Explicit 2-group interpretation used for reporting, exported metadata, and
 # presentation support. These bounds make the fast/thermal split explicit in the
@@ -196,7 +198,7 @@ class HomogenizedMSRMaterial:
     the graphite-dominated volume fractions called out in ORNL-TM-730.
     """
 
-    enrichment: float = 0.1975
+    enrichment: float = LEU_MAX_ENRICHMENT
     uf4_mol_frac: float = 0.04
     temperature: float = 900.0
     water_vol_frac: float = 0.0
@@ -784,7 +786,7 @@ def _to_builtin(value: Any) -> Any:
 
 def evaluate_design_v2(
     *,
-    enrichment: float = 0.1975,
+    enrichment: float = LEU_MAX_ENRICHMENT,
     uf4_mol_frac: float = 0.04,
     radius_cm: float = 50.0,
     height_cm: float = 100.0,
@@ -874,7 +876,7 @@ def find_critical_radius_v2(
     *,
     k_target: float = 1.03,
     aspect_ratio: float = 2.0,
-    enrichment: float = 0.1975,
+    enrichment: float = LEU_MAX_ENRICHMENT,
     uf4_mol_frac: float = 0.04,
     temperature_k: float = 900.0,
     water_vol_frac: float = 0.0,
@@ -1089,7 +1091,7 @@ def generate_dataset_v2(
     records: List[Dict[str, Any]] = []
 
     bounds = {
-        "enrichment": (0.10, 0.35),
+        "enrichment": (LEU_MIN_ENRICHMENT, LEU_MAX_ENRICHMENT),
         "uf4_mol_frac": (0.008, 0.05),
         "radius_cm": (30.0, 85.0),
         "height_cm": (60.0, 170.0),
