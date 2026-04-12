@@ -29,6 +29,8 @@ from monster_v2_package.solver_v2 import (
     BENCHMARK_CIRCULATING_BETA,
     BENCHMARK_STATIC_BETA,
     DELAYED_RATIO_TARGET,
+    FUEL_C_BENCHMARK_MODE,
+    LEU_DESIGN_MODE,
     THERMAL_FLUX_TARGET,
     compute_temperature_sweep_v2,
     evaluate_design_v2,
@@ -163,6 +165,7 @@ def plot_leu_design_space(out_path: Path) -> dict:
                 water_vol_frac=0.0,
                 nr=18,
                 nz=28,
+                reactor_mode=LEU_DESIGN_MODE,
             )
             kmap[i, j] = result["k_eff"]
 
@@ -174,6 +177,7 @@ def plot_leu_design_space(out_path: Path) -> dict:
         temperature_k=900.0,
         water_vol_frac=0.0,
         r_bounds_cm=(60.0, 120.0),
+        reactor_mode=LEU_DESIGN_MODE,
     )
 
     fig, ax = plt.subplots(figsize=(10.5, 7.2))
@@ -273,10 +277,11 @@ def write_report(
         "",
         "## What Changed",
         "",
-        "- Added a benchmark-aware v2 solver in `monster_v2_package/solver_v2.py` with corrected power normalization and explicit field exports.",
+        "- Added an explicit split between LEU design mode and Fuel C benchmark-anchor mode in `monster_v2_package/solver_v2.py`.",
         "- Added extrapolated-vacuum leakage in the finite-difference operator and explicit buckling outputs `Br^2`, `Bz^2`, and `Bg^2`.",
         "- Added a repaired delayed-neutron model calibrated to the ORNL Fuel C circulating/static ratio using the benchmark group data.",
-        "- Added a dataset exporter that writes scalar labels, XS terms, buckling features, mesh metadata, and full 2D fields.",
+        "- Added a transport-informed LEU XS proxy path plus a richer dataset exporter that writes scalar labels, XS terms, buckling features, mesh metadata, currents, and full 2D fields.",
+        "- Kept Fuel C as a validation anchor only; the active design path now uses the LEU proxy library instead of benchmark-guided defaults.",
         "",
         "## Before / After Snapshot",
         "",
@@ -298,6 +303,7 @@ def write_report(
         f"- Peak thermal flux / ORNL target: `{thermal_flux_ratio:.3f}`",
         f"- Upgraded `D2`: `{fuel_c_result['xs']['D2']:.3f} cm`",
         f"- Upgraded side-leakage share: `{fuel_c_result['leakage_side_fraction']:.3f}`",
+        "- Not every fidelity target is fixed: Fuel C peak thermal flux remains high and the delayed ratio is still above the benchmark target.",
         "",
         "## Exported Artifacts",
         "",
@@ -305,12 +311,14 @@ def write_report(
         "- Flux/power plot: `artifacts/solver_v2/fuel_c_proxy_fields.png`",
         "- Temperature plot: `artifacts/solver_v2/fuel_c_temperature_sweep.png`",
         "- Machine-readable summary: `artifacts/solver_v2/summary.json`",
+        "- LEU XS library: `artifacts/leu_transport_xs/leu_transport_proxy_library.json`",
         "",
         "## Remaining Gaps",
         "",
-        "- Cross sections are still benchmark-guided homogenized corrections, not transport-derived GAM/THERMOS or Serpent/SCALE group constants.",
+        "- LEU design cross sections are now transport-informed proxies, not full transport-derived GAM/THERMOS or Serpent/SCALE group constants.",
         "- The delayed-neutron model is calibrated to the Fuel C benchmark rather than derived from a full precursor transport solve.",
-        "- The field surrogate dataset is now training-ready, but higher-fidelity flux magnitudes will still benefit from transport-derived XS tables.",
+        "- Flux magnitude remains a major limitation: Fuel C peak thermal flux is still well above the ORNL target even after the LEU cleanup.",
+        "- The field surrogate dataset is now training-ready, but higher-fidelity flux magnitudes and kinetics terms will still benefit from real transport-derived XS tables.",
         "",
     ]
     out_path.write_text("\n".join(lines))
@@ -337,7 +345,8 @@ def build_solver_bundle(summary: dict) -> dict:
             "temperature_plot_png": str((ARTIFACT_DIR / "fuel_c_temperature_sweep.png").relative_to(ROOT)),
             "field_plot_png": str((ARTIFACT_DIR / "fuel_c_proxy_fields.png").relative_to(ROOT)),
             "leu_design_space_png": str((ARTIFACT_DIR / "leu_design_space.png").relative_to(ROOT)),
-            "dataset_json": str((ARTIFACT_DIR / "dataset_v2_small.json").relative_to(ROOT)),
+            "dataset_json": str((ROOT / "artifacts" / "leu_sweeps" / "leu_dataset_v3.json").relative_to(ROOT)),
+            "leu_xs_library_json": str((ROOT / "artifacts" / "leu_transport_xs" / "leu_transport_proxy_library.json").relative_to(ROOT)),
         },
         "highlights": {
             "legacy_peak_flux_n_cm2_s": summary["legacy_baseline"]["peak_flux_n_cm2_s"],
@@ -442,10 +451,10 @@ def write_comprehensive_solver_report(report_path: Path, bundle: dict) -> None:
             "",
             "## Interpretation",
             "",
-            "- The upgraded solver materially improves temperature-reactivity behavior relative to v1.",
-            "- The upgraded solver makes leakage and buckling explicit rather than implicit.",
-            "- The upgraded solver exports the actual flux and power fields needed for downstream learning.",
-            "- The main remaining gap is flux magnitude, which still indicates cross-section fidelity limitations.",
+            "- The upgraded solver materially improves temperature-reactivity behavior and LEU design-region consistency relative to v1.",
+            "- Fuel C remains a benchmark anchor rather than the LEU design basis, so benchmark comparisons and design-path behavior should be read separately.",
+            "- The upgraded solver makes leakage and buckling explicit rather than implicit and exports the actual flux and power fields needed for downstream learning.",
+            "- The main remaining gaps are that the LEU design path still uses a transport-informed proxy instead of a full MGXS transport collapse, and flux magnitude is still materially high against ORNL Fuel C.",
             "",
         ]
     )
@@ -475,6 +484,7 @@ def main() -> None:
         uf4_mol_frac=0.04,
         temperature_k=900.0,
         water_vol_frac=0.0,
+        reactor_mode=LEU_DESIGN_MODE,
     )
 
     print("Running Fuel C proxy case...")
@@ -488,6 +498,8 @@ def main() -> None:
         water_vol_frac=0.0,
         nr=36,
         nz=52,
+        reactor_mode=FUEL_C_BENCHMARK_MODE,
+        xs_model="benchmark_guided",
     )
 
     print("Running temperature sweep...")
@@ -499,13 +511,15 @@ def main() -> None:
             "height_cm": 174.986,
             "fuel_volume_fraction": 0.225,
             "water_vol_frac": 0.0,
+            "reactor_mode": FUEL_C_BENCHMARK_MODE,
+            "xs_model": "benchmark_guided",
         },
         np.linspace(820.0, 1020.0, 9),
     )
 
     print("Generating field dataset...")
-    dataset_path = ARTIFACT_DIR / "dataset_v2_small.json"
-    dataset = generate_dataset_v2(dataset_path, n_samples=24, seed=42)
+    dataset_path = ROOT / "artifacts" / "leu_sweeps" / "leu_dataset_v3.json"
+    dataset = generate_dataset_v2(dataset_path, n_samples=96, seed=42)
 
     plot_temperature_sweep(sweep, ARTIFACT_DIR / "fuel_c_temperature_sweep.png")
     plot_fields(fuel_c_result, ARTIFACT_DIR / "fuel_c_proxy_fields.png")

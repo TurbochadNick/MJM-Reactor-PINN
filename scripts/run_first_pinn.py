@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import subprocess
 import sys
+import tempfile
 import time
 from copy import deepcopy
 from dataclasses import dataclass
@@ -15,7 +17,12 @@ ARTIFACT_DIR = ROOT / "artifacts" / "first_pinn_run"
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-os.environ.setdefault("MPLCONFIGDIR", str(ARTIFACT_DIR / ".mpl-cache"))
+MPL_CACHE_ROOT = ARTIFACT_DIR / ".mpl-cache"
+MPL_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault(
+    "MPLCONFIGDIR",
+    tempfile.mkdtemp(prefix="run-", dir=str(MPL_CACHE_ROOT)),
+)
 
 import matplotlib
 
@@ -23,10 +30,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from monster_v2_package.solver_v2 import LEU_MAX_ENRICHMENT, LEU_MIN_ENRICHMENT, generate_dataset_v2
+from monster_v2_package.solver_v2 import LEU_MAX_ENRICHMENT, LEU_MIN_ENRICHMENT
 
 
-DATASET_PATH = ROOT / "artifacts" / "solver_v2" / "dataset_v2_small.json"
+DATASET_PATH = ROOT / "artifacts" / "leu_sweeps" / "leu_dataset_v3.json"
+LEU_XS_SCRIPT = ROOT / "scripts" / "run_leu_xs_generation.py"
+LEU_SWEEP_SCRIPT = ROOT / "scripts" / "run_leu_sweeps.py"
 
 RAW_INPUT_KEYS = [
     "enrichment",
@@ -48,6 +57,11 @@ FEATURE_KEYS = RAW_INPUT_KEYS + [
     "Sigma_s12_cm1",
     "nuSigma_f1_cm1",
     "nuSigma_f2_cm1",
+    "moderation_index",
+    "spectral_hardness",
+    "thermal_fission_factor",
+    "thermal_absorption_factor",
+    "downscatter_factor",
 ]
 TARGET_KEYS = [
     "k_eff",
@@ -102,22 +116,76 @@ def to_builtin(value):
     return value
 
 
-def load_dataset(dataset_path: Path, n_samples: int = 24) -> list[dict]:
-    if not dataset_path.exists():
-        dataset_path.parent.mkdir(parents=True, exist_ok=True)
-        generate_dataset_v2(dataset_path, n_samples=n_samples, seed=42)
+def regenerate_leu_dataset_via_pipeline(reason: str) -> None:
+    print(f"Regenerating LEU dataset through the sweep pipeline: {reason}")
+    subprocess.run([sys.executable, str(LEU_XS_SCRIPT)], cwd=ROOT, check=True)
+    subprocess.run([sys.executable, str(LEU_SWEEP_SCRIPT)], cwd=ROOT, check=True)
 
-    rows = json.loads(dataset_path.read_text())
-    needs_regen = False
-    if rows and rows[0]["global_labels"].get("alpha_T_pcm_per_K") is None:
-        needs_regen = True
-    if rows:
-        enrichments = [float(row["inputs"]["enrichment"]) for row in rows]
-        if min(enrichments) < LEU_MIN_ENRICHMENT - 1.0e-12 or max(enrichments) > LEU_MAX_ENRICHMENT + 1.0e-12:
-            needs_regen = True
-    if needs_regen:
-        generate_dataset_v2(dataset_path, n_samples=max(n_samples, len(rows)), seed=42)
+
+def dataset_validation_issues(rows: list[dict], dataset_path: Path, manifest_path: Path, n_samples: int) -> list[str]:
+    issues = []
+    if not dataset_path.exists():
+        issues.append("dataset file is missing")
+        return issues
+    if not manifest_path.exists():
+        issues.append("dataset manifest is missing")
+    if not rows:
+        issues.append("dataset has no rows")
+        return issues
+
+    enrichments = [float(row["inputs"]["enrichment"]) for row in rows]
+    if min(enrichments) < LEU_MIN_ENRICHMENT - 1.0e-12 or max(enrichments) > LEU_MAX_ENRICHMENT + 1.0e-12:
+        issues.append("dataset enrichment range is outside the LEU design box")
+    if len(rows) < n_samples:
+        issues.append(f"dataset has only {len(rows)} rows, expected at least {n_samples}")
+    if rows[0]["global_labels"].get("alpha_T_pcm_per_K") is None:
+        issues.append("dataset is missing alpha_T labels")
+    if rows[0]["provenance"].get("xs_model") != "leu_transport_proxy":
+        issues.append("dataset was not generated from the LEU transport-proxy path")
+    if rows[0]["xs"].get("transport_proxy") is None:
+        issues.append("dataset records are missing transport-proxy metadata")
+
+    alpha_zero_rows = [
+        row["sample_id"]
+        for row in rows
+        if abs(float(row["global_labels"].get("alpha_T_pcm_per_K", 0.0))) <= 1.0e-12
+    ]
+    alpha_direct_proxy_rows = [
+        row["sample_id"]
+        for row in rows
+        if row.get("provenance", {}).get("alpha_T_details", {}).get("used_direct_transport_proxy")
+    ]
+    if alpha_zero_rows:
+        issues.append(
+            f"dataset contains suspicious exact-zero alpha_T samples: {', '.join(alpha_zero_rows[:4])}"
+        )
+
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+        if int(manifest.get("record_count", -1)) != len(rows):
+            issues.append("dataset manifest record count does not match the dataset")
+        if int(manifest.get("alpha_zero_count", -1)) != len(alpha_zero_rows):
+            issues.append("dataset manifest alpha-zero count is inconsistent with the dataset")
+        if int(manifest.get("alpha_direct_proxy_count", -1)) != len(alpha_direct_proxy_rows):
+            issues.append("dataset manifest direct-proxy alpha count is inconsistent with the dataset")
+        if manifest.get("xs_model") != "leu_transport_proxy":
+            issues.append("dataset manifest xs_model is not leu_transport_proxy")
+    return issues
+
+
+def load_dataset(dataset_path: Path, n_samples: int = 96) -> list[dict]:
+    manifest_path = dataset_path.with_name(f"{dataset_path.stem}_manifest.json")
+    if not dataset_path.exists():
+        regenerate_leu_dataset_via_pipeline("dataset is missing")
+
+    rows = json.loads(dataset_path.read_text()) if dataset_path.exists() else []
+    issues = dataset_validation_issues(rows, dataset_path, manifest_path, n_samples)
+    if issues:
+        regenerate_leu_dataset_via_pipeline("; ".join(issues))
         rows = json.loads(dataset_path.read_text())
+        issues = dataset_validation_issues(rows, dataset_path, manifest_path, n_samples)
+        if issues:
+            raise RuntimeError(f"LEU dataset is still invalid after regeneration: {'; '.join(issues)}")
     return rows
 
 
@@ -126,6 +194,7 @@ def build_scalar_features(record: dict) -> tuple[list[float], list[float], list[
     geom = record["geometry"]
     xs = record["xs"]
     labels = record["global_labels"]
+    proxy = xs.get("transport_proxy", {})
 
     raw = [
         float(inputs["enrichment"]),
@@ -147,6 +216,11 @@ def build_scalar_features(record: dict) -> tuple[list[float], list[float], list[
         float(xs["Sigma_s12_cm1"]),
         float(xs["nuSigma_f1_cm1"]),
         float(xs["nuSigma_f2_cm1"]),
+        float(proxy.get("moderation_index", 1.0)),
+        float(proxy.get("spectral_hardness", 1.0)),
+        float(proxy.get("thermal_fission_factor", 1.0)),
+        float(proxy.get("thermal_absorption_factor", 1.0)),
+        float(proxy.get("downscatter_factor", 1.0)),
     ]
     target = [float(labels[key]) for key in TARGET_KEYS]
     return raw, full, target
@@ -196,8 +270,9 @@ def build_field_arrays(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, np.nda
                     r_cm / max(re, 1.0e-8),
                     z_cm / max(he, 1.0e-8),
                     1.0 - r_cm / max(radius, 1.0e-8),
-                    z_cm / max(height, 1.0e-8),
                     1.0 - z_cm / max(height, 1.0e-8),
+                    1.0 - r_cm / max(re, 1.0e-8),
+                    1.0 - z_cm / max(he, 1.0e-8),
                 ]
                 x_rows.append(full_features + local)
                 y_rows.append([phi1[i, j], phi2[i, j]])
@@ -214,8 +289,8 @@ def build_field_arrays(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, np.nda
 
 
 def analytic_field_baseline(point_features: np.ndarray) -> np.ndarray:
-    r_over_r = point_features[:, -7]
-    z_over_h = point_features[:, -6]
+    r_over_r = point_features[:, -8]
+    z_over_h = point_features[:, -7]
     radial = np.clip(np.cos(0.5 * math.pi * r_over_r), 0.0, None)
     axial = np.clip(np.sin(math.pi * z_over_h), 0.0, None)
     shape = (radial * axial).reshape(-1, 1)
@@ -829,6 +904,7 @@ def write_comprehensive_report(report_path: Path, comprehensive: dict) -> None:
                 "## Solver Benchmark Snapshot",
                 "",
                 "- Fuel C remains a higher-enrichment benchmark anchor and is not part of the LEU-only PINN training set.",
+                "- The underlying LEU solver path uses a transport-informed proxy XS workflow, not full transport-derived MGXS.",
                 f"- Fuel C proxy `alpha_T`: `{alpha_value:.3f} pcm/K`",
                 f"- ORNL `alpha_T` target: `{targets['alpha_pcm_per_K']:.3f} pcm/K`",
                 f"- Fuel C proxy delayed ratio: `{fuel_c['beta_eff_ratio']:.3f}`",
@@ -838,10 +914,11 @@ def write_comprehensive_report(report_path: Path, comprehensive: dict) -> None:
                 "",
                 "## Interpretation",
                 "",
-                "- The upgraded solver substantially improves temperature-reactivity behavior and D2 plausibility.",
-                "- The field pipeline now has explicit flux-field labels instead of scalar-only supervision.",
+                "- The richer LEU dataset improves coverage near criticality and gives the field model much better supervision than the old small corpus.",
+                "- Field accuracy and scalar physics consistency improve, but scalar RMSE does not improve uniformly across targets.",
                 "- The main remaining solver-level gap is flux magnitude, which still points to cross-section fidelity limits.",
-                "- The main remaining PINN-level gap is scalar robustness on the small dataset, especially for k_eff and beta ratio.",
+                "- In this run, alpha_T, peaking-factor, power-density, and beta-ratio errors improve, while k_eff, k_inf, and peak-flux RMSE worsen.",
+                "- The main remaining PINN-level gap is scalar robustness on the richer LEU dataset, especially the tradeoff between reactivity-focused targets and flux-magnitude accuracy.",
                 "",
             ]
         )
@@ -864,9 +941,10 @@ def write_summary(summary_path: Path, payload: dict) -> None:
         "",
         f"- Samples: {payload['n_samples']}",
         f"- Field points: {payload['n_field_points']}",
-        "- Data source: `artifacts/solver_v2/dataset_v2_small.json`",
+        "- Data source: `artifacts/leu_sweeps/leu_dataset_v3.json`",
         f"- Enrichment regime: LEU-only `{LEU_MIN_ENRICHMENT*100:.1f}%` to `{LEU_MAX_ENRICHMENT*100:.1f}%`",
-        "- Inputs: benchmark-aware geometry, buckling, and XS features plus spatial coordinates for fields",
+        "- Inputs: LEU geometry, buckling, transport-proxy XS features, and spatial coordinates for fields",
+        "- Solver context: transport-informed LEU proxy workflow with Fuel C retained as an external benchmark anchor",
         "",
         "## Scalar Comparison",
         "",
@@ -874,14 +952,14 @@ def write_summary(summary_path: Path, payload: dict) -> None:
             f"- `k_eff` RMSE moved from {k_eff_baseline:.5f} to {k_eff_upgraded:.5f}."
         ),
         (
-            f"- `alpha_T` RMSE improved from {alpha_baseline:.2f} "
+            f"- `alpha_T` RMSE moved from {alpha_baseline:.2f} "
             f"to {alpha_upgraded:.2f} pcm/K."
         ),
         (
-            f"- Criticality-consistency residual improved from {residual_baseline:.5f} "
+            f"- Criticality-consistency residual moved from {residual_baseline:.5f} "
             f"to {residual_upgraded:.5f}."
         ),
-        "- The upgraded scalar model improves benchmark-sensitive labels more than overall `k_eff` RMSE on this small 24-sample corpus, so the scalar head still needs more data and tuning.",
+        "- Lower is better for all three quantities above. alpha_T improves in this run, but scalar accuracy is still mixed overall and does not improve uniformly across targets.",
         "",
         "## Field Comparison",
         "",
@@ -908,7 +986,7 @@ def write_summary(summary_path: Path, payload: dict) -> None:
 
 def main() -> None:
     t0 = time.time()
-    rows = load_dataset(DATASET_PATH, n_samples=24)
+    rows = load_dataset(DATASET_PATH, n_samples=96)
 
     x_raw, x_full, y_scalar, bg2 = build_scalar_arrays(rows)
     train_idx, test_idx = train_test_split(len(rows), test_fraction=0.25, seed=42)
@@ -968,12 +1046,12 @@ def main() -> None:
         field_x[test_mask],
         field_y[test_mask],
         boundary_mask[test_mask],
-        epochs=800,
+        epochs=600,
         lr=1.8e-3,
         lambda_bc=0.10,
         lambda_pos=0.02,
         lambda_l2=1.0e-6,
-        print_every=150,
+        print_every=120,
     )
 
     field_pred = field_model.predict(field_x[test_mask])

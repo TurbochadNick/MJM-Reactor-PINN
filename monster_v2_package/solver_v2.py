@@ -28,6 +28,14 @@ from scipy import sparse
 from scipy.optimize import brentq
 from scipy.sparse.linalg import spsolve
 
+from monster_v2_package.leu_transport_xs import (
+    DEFAULT_LEU_XS_LIBRARY_PATH,
+    LEU_TRANSPORT_PROXY_LIBRARY_ID,
+    REFERENCE_LATTICE_FUEL_VOLUME_FRACTION,
+    REFERENCE_LATTICE_GRAPHITE_VOLUME_FRACTION,
+    detect_transport_tooling,
+    resolve_transport_proxy_xs,
+)
 from legacy.v1.mjm_solver_v1 import (
     BARN,
     E_FISSION,
@@ -52,6 +60,8 @@ BENCHMARK_CIRCULATING_BETA = FUEL_C["delayed_neutrons"]["beta_eff_circulating"]
 BENCHMARK_PROMPT_LIFETIME = FUEL_C["kinetics"]["prompt_neutron_lifetime_s"]
 LEU_MIN_ENRICHMENT = 0.03
 LEU_MAX_ENRICHMENT = 0.05
+LEU_DESIGN_MODE = "leu_design"
+FUEL_C_BENCHMARK_MODE = "fuel_c_benchmark"
 
 # Explicit 2-group interpretation used for reporting, exported metadata, and
 # presentation support. These bounds make the fast/thermal split explicit in the
@@ -152,8 +162,8 @@ DELAYED_LEAKAGE_PENALTY = _fit_delayed_penalty_constant()
 class XSCalibration:
     """Repository-local benchmark-guided corrections for the homogenized model."""
 
-    benchmark_fuel_volume_fraction: float = FUEL_C["geometry"]["reference_fuel_volume_fraction"]
-    benchmark_graphite_volume_fraction: float = FUEL_C["geometry"]["reference_graphite_volume_fraction"]
+    benchmark_fuel_volume_fraction: float = REFERENCE_LATTICE_FUEL_VOLUME_FRACTION
+    benchmark_graphite_volume_fraction: float = REFERENCE_LATTICE_GRAPHITE_VOLUME_FRACTION
     thermal_fission_factor: float = 0.82
     thermal_absorption_factor: float = 1.18
     fast_absorption_factor: float = 1.10
@@ -264,7 +274,7 @@ class HomogenizedMSRMaterial:
             "O16": water_frac * n_h2o,
         }
 
-    def compute_macroscopic_xs(self) -> Dict[str, Any]:
+    def _compute_benchmark_guided_xs(self) -> Dict[str, Any]:
         xs_db = get_xs_database_v2()
         number_densities = self.compute_number_densities()
         temp_ratio = max(self.temperature, 1.0) / 900.0
@@ -362,6 +372,9 @@ class HomogenizedMSRMaterial:
             "k_inf": k_inf,
             "N": number_densities,
             "volume_fractions": self.volume_fractions(),
+            "xs_model": "benchmark_guided",
+            "reactor_mode": FUEL_C_BENCHMARK_MODE,
+            "xs_source": "benchmark-guided homogenized 2-group corrections anchored to ORNL Fuel C",
             "corrections": {
                 "resonance_factor": resonance_factor,
                 "thermal_fission_factor": thermal_fission_factor,
@@ -370,6 +383,56 @@ class HomogenizedMSRMaterial:
                 "downscatter_efficiency": downscatter_efficiency,
             },
         }
+
+    def compute_macroscopic_xs(
+        self,
+        *,
+        reactor_mode: str = LEU_DESIGN_MODE,
+        xs_model: str = "auto",
+        xs_library_path: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        benchmark_guided_xs = self._compute_benchmark_guided_xs()
+        benchmark_guided_xs["reactor_mode"] = reactor_mode
+
+        resolved_xs_model = xs_model
+        if xs_model == "auto":
+            resolved_xs_model = "benchmark_guided" if reactor_mode == FUEL_C_BENCHMARK_MODE else "leu_transport_proxy"
+
+        if resolved_xs_model == "benchmark_guided":
+            benchmark_guided_xs["xs_model"] = "benchmark_guided"
+            benchmark_guided_xs["reactor_mode"] = reactor_mode
+            benchmark_guided_xs["transport_tooling"] = detect_transport_tooling()
+            return benchmark_guided_xs
+
+        if resolved_xs_model != "leu_transport_proxy":
+            raise ValueError(f"Unsupported xs_model '{resolved_xs_model}'")
+
+        state = {
+            "enrichment": self.enrichment,
+            "uf4_mol_frac": self.uf4_mol_frac,
+            "temperature_K": self.temperature,
+            "fuel_volume_fraction": self.fuel_volume_fraction,
+            "water_vol_frac": self.water_vol_frac,
+        }
+        leu_xs = resolve_transport_proxy_xs(
+            state=state,
+            benchmark_guided_xs=benchmark_guided_xs,
+            library_path=xs_library_path or DEFAULT_LEU_XS_LIBRARY_PATH,
+        )
+        leu_xs.update(
+            {
+                "N": benchmark_guided_xs["N"],
+                "volume_fractions": benchmark_guided_xs["volume_fractions"],
+                "xs_model": "leu_transport_proxy",
+                "reactor_mode": reactor_mode,
+                "xs_source": (
+                    "transport-informed LEU 2-group proxy interpolated from explicit project library "
+                    f"'{LEU_TRANSPORT_PROXY_LIBRARY_ID}'"
+                ),
+                "transport_tooling": detect_transport_tooling(),
+            }
+        )
+        return leu_xs
 
 
 @dataclass
@@ -625,6 +688,35 @@ def _normalize_to_power(
     }
 
 
+def _compute_group_currents(
+    geom: CylinderGeometryV2,
+    xs: Dict[str, Any],
+    phi1_shape: np.ndarray,
+    phi2_shape: np.ndarray,
+) -> Dict[str, np.ndarray]:
+    def gradients(field: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        d_dr = np.zeros_like(field)
+        d_dz = np.zeros_like(field)
+
+        d_dr[1:-1, :] = (field[2:, :] - field[:-2, :]) / (2.0 * geom.dr)
+        d_dr[0, :] = 0.0
+        d_dr[-1, :] = (field[-1, :] - field[-2, :]) / geom.dr
+
+        d_dz[:, 1:-1] = (field[:, 2:] - field[:, :-2]) / (2.0 * geom.dz)
+        d_dz[:, 0] = (field[:, 1] - field[:, 0]) / geom.dz
+        d_dz[:, -1] = (field[:, -1] - field[:, -2]) / geom.dz
+        return d_dr, d_dz
+
+    grad_r1, grad_z1 = gradients(phi1_shape)
+    grad_r2, grad_z2 = gradients(phi2_shape)
+    return {
+        "Jr1_shape": -xs["D1"] * grad_r1,
+        "Jz1_shape": -xs["D1"] * grad_z1,
+        "Jr2_shape": -xs["D2"] * grad_r2,
+        "Jz2_shape": -xs["D2"] * grad_z2,
+    }
+
+
 def _estimate_leakage_fractions(
     geom: CylinderGeometryV2,
     xs: Dict[str, Any],
@@ -797,6 +889,10 @@ def evaluate_design_v2(
     nr: int = 40,
     nz: int = 60,
     power_watts: float = 10.0e6,
+    reactor_mode: str = LEU_DESIGN_MODE,
+    xs_model: str = "auto",
+    xs_library_path: Optional[Path] = None,
+    sample_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     material = HomogenizedMSRMaterial(
         enrichment=enrichment,
@@ -806,7 +902,11 @@ def evaluate_design_v2(
         fuel_volume_fraction=fuel_volume_fraction,
         graphite_temperature=graphite_temperature_k,
     )
-    xs = material.compute_macroscopic_xs()
+    xs = material.compute_macroscopic_xs(
+        reactor_mode=reactor_mode,
+        xs_model=xs_model,
+        xs_library_path=xs_library_path,
+    )
     geom = CylinderGeometryV2(radius_cm=radius_cm, height_cm=height_cm, nr=nr, nz=nz)
     solution = solve_two_group_diffusion(geom, xs)
     buckling = _buckling(
@@ -822,6 +922,7 @@ def evaluate_design_v2(
         solution["phi2_shape"],
         power_watts,
     )
+    currents = _compute_group_currents(geom, xs, solution["phi1_shape"], solution["phi2_shape"])
     leakage = _estimate_leakage_fractions(geom, xs, normalized["phi_total_phys_n_cm2_s"])
 
     result: Dict[str, Any] = {
@@ -837,6 +938,8 @@ def evaluate_design_v2(
             "water_vol_frac": water_vol_frac,
             "fuel_volume_fraction": fuel_volume_fraction,
             "power_W": power_watts,
+            "reactor_mode": reactor_mode,
+            "xs_model": xs["xs_model"],
         },
         "k_eff": solution["k_eff"],
         "k_inf": xs["k_inf"],
@@ -855,11 +958,15 @@ def evaluate_design_v2(
         "phi1_shape": solution["phi1_shape"],
         "phi2_shape": solution["phi2_shape"],
         "phi_total_shape": solution["phi1_shape"] + solution["phi2_shape"],
+        **currents,
         **normalized,
         **leakage,
         "normalization_rule": "power-normalized with Sigma_f1*phi1 + Sigma_f2*phi2",
         "bc_type": "extrapolated vacuum on physical boundary",
-        "xs_source": "legacy ENDF-inspired 2-group + benchmark-guided homogenized corrections",
+        "xs_source": xs["xs_source"],
+        "reactor_mode": reactor_mode,
+        "xs_model": xs["xs_model"],
+        "sample_metadata": sample_metadata or {},
     }
     th = compute_thermal_hydraulics_v2(result)
     dn = effective_delayed_fraction_v2(
@@ -881,7 +988,10 @@ def find_critical_radius_v2(
     temperature_k: float = 900.0,
     water_vol_frac: float = 0.0,
     fuel_volume_fraction: float = CALIBRATION.benchmark_fuel_volume_fraction,
-    r_bounds_cm: Tuple[float, float] = (20.0, 120.0),
+    r_bounds_cm: Tuple[float, float] = (20.0, 140.0),
+    reactor_mode: str = LEU_DESIGN_MODE,
+    xs_model: str = "auto",
+    xs_library_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     def residual(radius_cm: float) -> float:
         result = evaluate_design_v2(
@@ -894,10 +1004,30 @@ def find_critical_radius_v2(
             fuel_volume_fraction=fuel_volume_fraction,
             nr=26,
             nz=40,
+            reactor_mode=reactor_mode,
+            xs_model=xs_model,
+            xs_library_path=xs_library_path,
         )
         return result["k_eff"] - k_target
 
-    radius_cm = brentq(residual, *r_bounds_cm, xtol=0.25)
+    lo, hi = r_bounds_cm
+    f_lo = residual(lo)
+    f_hi = residual(hi)
+    if f_lo * f_hi > 0.0:
+        for hi_candidate in (160.0, 180.0, 220.0):
+            f_candidate = residual(hi_candidate)
+            if f_lo * f_candidate <= 0.0:
+                hi = hi_candidate
+                f_hi = f_candidate
+                break
+        else:
+            raise ValueError(
+                f"Unable to bracket critical radius for enrichment={enrichment:.4f}, "
+                f"aspect_ratio={aspect_ratio:.3f}, k_target={k_target:.4f}; residuals "
+                f"were {f_lo:+.5f} at R={lo:.2f} cm and {f_hi:+.5f} at R={hi:.2f} cm."
+            )
+
+    radius_cm = brentq(residual, lo, hi, xtol=0.25)
     result = evaluate_design_v2(
         enrichment=enrichment,
         uf4_mol_frac=uf4_mol_frac,
@@ -908,6 +1038,9 @@ def find_critical_radius_v2(
         fuel_volume_fraction=fuel_volume_fraction,
         nr=40,
         nz=60,
+        reactor_mode=reactor_mode,
+        xs_model=xs_model,
+        xs_library_path=xs_library_path,
     )
     result["critical_radius_cm"] = radius_cm
     result["critical_height_cm"] = aspect_ratio * radius_cm
@@ -926,6 +1059,8 @@ def compute_temperature_sweep_v2(
         params["temperature_k"] = temp
         params.setdefault("nr", 28)
         params.setdefault("nz", 42)
+        params.setdefault("reactor_mode", LEU_DESIGN_MODE)
+        params.setdefault("xs_model", "auto")
         result = evaluate_design_v2(**params)
         sweep.append(
             {
@@ -964,6 +1099,10 @@ def compute_temperature_coefficient_v2(
     lower_params.setdefault("nz", 32)
     upper_params.setdefault("nr", 22)
     upper_params.setdefault("nz", 32)
+    lower_params.setdefault("reactor_mode", LEU_DESIGN_MODE)
+    lower_params.setdefault("xs_model", "auto")
+    upper_params.setdefault("reactor_mode", LEU_DESIGN_MODE)
+    upper_params.setdefault("xs_model", "auto")
 
     lower = evaluate_design_v2(**lower_params)
     upper = evaluate_design_v2(**upper_params)
@@ -979,6 +1118,17 @@ def compute_temperature_coefficient_v2(
         "k_hi": k_hi,
         "dk_dT": dkdT,
         "alpha_pcm_per_K": alpha_pcm,
+        "lower_xs_model": lower["xs_model"],
+        "upper_xs_model": upper["xs_model"],
+        "lower_proxy_method": lower["xs"].get("transport_proxy", {}).get("proxy_method"),
+        "upper_proxy_method": upper["xs"].get("transport_proxy", {}).get("proxy_method"),
+        "used_direct_transport_proxy": any(
+            (item or "").startswith("direct_transport_proxy_formula")
+            for item in (
+                lower["xs"].get("transport_proxy", {}).get("proxy_method"),
+                upper["xs"].get("transport_proxy", {}).get("proxy_method"),
+            )
+        ),
     }
 
 
@@ -989,17 +1139,25 @@ def export_sample_record(
     xs = result["xs"]
     th = result["thermal_hydraulics"]
     dn = result["delayed_neutrons"]
+    transport_proxy = xs.get("transport_proxy", {})
+    notes = [
+        "legacy v1 salt chemistry retained as a base input model",
+        "project uses explicit 2-group reporting bounds and finite-cylinder buckling-aware leakage",
+        ENERGY_GROUPS["note"],
+    ]
+    if result["reactor_mode"] == LEU_DESIGN_MODE:
+        notes.append(
+            "LEU design mode uses the transport-informed proxy XS path when full transport tooling is unavailable."
+        )
+    else:
+        notes.append("Fuel C benchmark mode retains the benchmark-guided XS anchor for honest validation.")
+
     record = {
         "sample_id": sample_id,
         "solver_version": result["solver_version"],
         "energy_groups": result["energy_groups"],
         "source_document": BENCHMARK_DATA["source"]["document"],
-        "notes": [
-            "legacy v1 salt chemistry retained as a base input model",
-            "graphite moderator fraction introduced from ORNL Fuel C benchmark",
-            "thermal-group corrections are benchmark-guided, not transport-derived",
-            ENERGY_GROUPS["note"],
-        ],
+        "notes": notes,
         "inputs": result["params"],
         "geometry": {
             "aspect_ratio": result["params"]["height_cm"] / max(result["params"]["radius_cm"], 1.0e-8),
@@ -1015,6 +1173,9 @@ def export_sample_record(
             "cp_J_kgK": th["Cp_J_kgK"],
             "mu_Pa_s": th["viscosity_mPa_s"] * 1.0e-3,
             "k_W_mK": th["k_W_mK"],
+            "graphite_volume_fraction": xs["volume_fractions"]["graphite"],
+            "moderator_to_fuel_ratio": xs["volume_fractions"]["graphite"]
+            / max(xs["volume_fractions"]["fuel"], 1.0e-8),
         },
         "number_densities": xs["N"],
         "xs": {
@@ -1031,7 +1192,11 @@ def export_sample_record(
             "Sigma_r1_cm1": xs["Sigma_r1"],
             "chi1": xs["chi1"],
             "chi2": xs["chi2"],
+            "k_inf": xs["k_inf"],
             "corrections": xs["corrections"],
+            "xs_model": xs["xs_model"],
+            "reactor_mode": xs["reactor_mode"],
+            "transport_proxy": transport_proxy,
         },
         "global_labels": {
             "k_eff": result["k_eff"],
@@ -1070,44 +1235,321 @@ def export_sample_record(
             "phi2_phys_n_cm2_s": result["phi2_phys_n_cm2_s"],
             "phi_total_phys_n_cm2_s": result["phi_total_phys_n_cm2_s"],
             "power_density_W_cm3": result["power_density_W_cm3"],
+            "power_density_W_cm3_shape": result["power_density_W_cm3"],
             "fission_rate_cm3_s": result["fission_rate_cm3_s"],
+            "fission_rate_cm3_s_shape": result["fission_rate_cm3_s"],
+            "Jr1_shape": result["Jr1_shape"],
+            "Jz1_shape": result["Jz1_shape"],
+            "Jr2_shape": result["Jr2_shape"],
+            "Jz2_shape": result["Jz2_shape"],
         },
         "provenance": {
+            "solver_version": result["solver_version"],
             "bc_type": result["bc_type"],
             "normalization_rule": result["normalization_rule"],
             "xs_source": result["xs_source"],
             "benchmark_path": str(BENCHMARK_PATH.relative_to(REPO_ROOT)),
+            "reactor_mode": result["reactor_mode"],
+            "xs_model": result["xs_model"],
+            "transport_tooling": xs.get("transport_tooling"),
+            "xs_library_id": transport_proxy.get("library_id"),
+            "xs_library_path": transport_proxy.get("library_path", str(DEFAULT_LEU_XS_LIBRARY_PATH.relative_to(REPO_ROOT))),
+            "enrichment_regime": "LEU" if result["params"]["enrichment"] <= LEU_MAX_ENRICHMENT + 1.0e-12 else "benchmark",
+            "benchmark_anchor": result["reactor_mode"] == FUEL_C_BENCHMARK_MODE,
+            "sampling_strategy": result.get("sample_metadata", {}).get("sampling_strategy"),
+            "sample_family": result.get("sample_metadata", {}).get("sample_family"),
+            "sample_metadata": result.get("sample_metadata", {}),
+            "alpha_T_details": result.get("alpha_T_details"),
         },
     }
     return _to_builtin(record)
 
 
+def _latin_hypercube_samples(
+    bounds: Mapping[str, Tuple[float, float]],
+    n_samples: int,
+    rng: np.random.Generator,
+) -> List[Dict[str, float]]:
+    keys = list(bounds)
+    dim = len(keys)
+    intervals = np.linspace(0.0, 1.0, n_samples + 1)
+    unit = np.zeros((n_samples, dim), dtype=float)
+    for axis in range(dim):
+        unit[:, axis] = intervals[:-1] + rng.random(n_samples) * (1.0 / n_samples)
+        rng.shuffle(unit[:, axis])
+
+    samples: List[Dict[str, float]] = []
+    for row in unit:
+        sample = {}
+        for axis, key in enumerate(keys):
+            lo, hi = bounds[key]
+            sample[key] = float(lo + row[axis] * (hi - lo))
+        samples.append(sample)
+    return samples
+
+
+def _dataset_manifest_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}_manifest.json")
+
+
+def _write_dataset_manifest(output_path: Path, records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    k_eff = np.array([row["global_labels"]["k_eff"] for row in records], dtype=float)
+    alpha = np.array([row["global_labels"]["alpha_T_pcm_per_K"] for row in records], dtype=float)
+    enrichment = np.array([row["inputs"]["enrichment"] for row in records], dtype=float)
+    near_critical = int(np.sum(np.abs(k_eff - 1.0) <= 0.05))
+    alpha_zero_count = int(np.sum(np.abs(alpha) <= 1.0e-12))
+    alpha_direct_proxy_count = sum(
+        1
+        for row in records
+        if row.get("provenance", {}).get("alpha_T_details", {}).get("used_direct_transport_proxy")
+    )
+
+    strategy_counts: Dict[str, int] = {}
+    for row in records:
+        strategy = row["provenance"].get("sampling_strategy") or "unspecified"
+        strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
+
+    manifest = {
+        "dataset_id": "leu_targeted_dataset_v3",
+        "record_count": len(records),
+        "strategy_counts": strategy_counts,
+        "near_critical_count": near_critical,
+        "alpha_zero_count": alpha_zero_count,
+        "alpha_direct_proxy_count": alpha_direct_proxy_count,
+        "k_eff": {
+            "min": float(np.min(k_eff)),
+            "max": float(np.max(k_eff)),
+            "mean": float(np.mean(k_eff)),
+        },
+        "alpha_T_pcm_per_K": {
+            "min": float(np.min(alpha)),
+            "max": float(np.max(alpha)),
+            "mean": float(np.mean(alpha)),
+        },
+        "enrichment": {
+            "min": float(np.min(enrichment)),
+            "max": float(np.max(enrichment)),
+        },
+        "xs_model": "leu_transport_proxy",
+        "reactor_mode": LEU_DESIGN_MODE,
+        "xs_library_path": str(DEFAULT_LEU_XS_LIBRARY_PATH.relative_to(REPO_ROOT)),
+        "transport_tooling": detect_transport_tooling(),
+        "alpha_T_note": (
+            "alpha_T is computed by central-difference temperature perturbation; exact zeros are treated as suspicious and should be investigated."
+        ),
+        "alpha_direct_proxy_note": (
+            "Counts samples whose alpha_T perturbation used the direct transport-proxy fallback outside the tabulated LEU XS grid; "
+            "these rows are retained as explicit hard cases rather than silently clamped."
+        ),
+    }
+    manifest_path = _dataset_manifest_path(output_path)
+    manifest_path.write_text(json.dumps(_to_builtin(manifest), indent=2))
+    return manifest
+
+
 def generate_dataset_v2(
     output_path: Path,
-    n_samples: int = 32,
+    n_samples: int = 96,
     seed: int = 42,
 ) -> List[Dict[str, Any]]:
     rng = np.random.default_rng(seed)
     records: List[Dict[str, Any]] = []
 
-    bounds = {
+    broad_count = max(8, int(round(0.28 * n_samples)))
+    near_critical_count = max(12, int(round(0.34 * n_samples)))
+    temperature_count = max(8, int(round(0.20 * n_samples)))
+    leakage_count = max(6, int(round(0.10 * n_samples)))
+    edge_count = max(4, n_samples - broad_count - near_critical_count - temperature_count - leakage_count)
+
+    broad_bounds = {
         "enrichment": (LEU_MIN_ENRICHMENT, LEU_MAX_ENRICHMENT),
-        "uf4_mol_frac": (0.008, 0.05),
-        "radius_cm": (30.0, 85.0),
-        "height_cm": (60.0, 170.0),
+        "uf4_mol_frac": (0.025, 0.05),
+        "radius_cm": (45.0, 115.0),
+        "height_cm": (70.0, 220.0),
         "temperature_k": (780.0, 1050.0),
-        "water_vol_frac": (0.0, 0.12),
+        "water_vol_frac": (0.0, 0.03),
         "fuel_volume_fraction": (0.18, 0.28),
     }
-    keys = list(bounds)
 
-    for idx in range(n_samples):
-        params = {}
-        for key in keys:
-            lo, hi = bounds[key]
-            params[key] = float(rng.uniform(lo, hi))
-        params["nr"] = 24
-        params["nz"] = 36
+    planned_params: List[Dict[str, Any]] = []
+    for sample in _latin_hypercube_samples(broad_bounds, broad_count, rng):
+        sample.update(
+            {
+                "nr": 20,
+                "nz": 30,
+                "reactor_mode": LEU_DESIGN_MODE,
+                "xs_model": "auto",
+                "sample_metadata": {
+                    "sampling_strategy": "broad_latin_hypercube",
+                    "sample_family": "broad_leu",
+                },
+            }
+        )
+        planned_params.append(sample)
+
+    def add_targeted_case(sample: Dict[str, Any]) -> None:
+        sample.setdefault("nr", 20)
+        sample.setdefault("nz", 30)
+        sample.setdefault("reactor_mode", LEU_DESIGN_MODE)
+        sample.setdefault("xs_model", "auto")
+        planned_params.append(sample)
+
+    for _ in range(near_critical_count):
+        for attempt in range(10):
+            enrichment = float(rng.uniform(0.035, LEU_MAX_ENRICHMENT))
+            uf4_mol_frac = float(rng.uniform(0.03, 0.05))
+            temperature_k = float(rng.uniform(820.0, 980.0))
+            fuel_volume_fraction = float(rng.uniform(0.20, 0.26))
+            water_vol_frac = float(rng.uniform(0.0, 0.01))
+            aspect_ratio = float(rng.uniform(1.5, 2.7))
+            try:
+                critical = find_critical_radius_v2(
+                    k_target=1.0,
+                    aspect_ratio=aspect_ratio,
+                    enrichment=enrichment,
+                    uf4_mol_frac=uf4_mol_frac,
+                    temperature_k=temperature_k,
+                    water_vol_frac=water_vol_frac,
+                    fuel_volume_fraction=fuel_volume_fraction,
+                )
+                delta = float(rng.uniform(-0.07, 0.06))
+                radius_cm = critical["critical_radius_cm"] * (1.0 + delta)
+                add_targeted_case(
+                    {
+                        "enrichment": enrichment,
+                        "uf4_mol_frac": uf4_mol_frac,
+                        "radius_cm": radius_cm,
+                        "height_cm": aspect_ratio * radius_cm,
+                        "temperature_k": temperature_k,
+                        "water_vol_frac": water_vol_frac,
+                        "fuel_volume_fraction": fuel_volume_fraction,
+                        "sample_metadata": {
+                            "sampling_strategy": "near_critical_rooted",
+                            "sample_family": "near_critical",
+                            "critical_radius_cm": critical["critical_radius_cm"],
+                            "critical_delta_fraction": delta,
+                            "critical_target": 1.0,
+                        },
+                    }
+                )
+                break
+            except ValueError:
+                if attempt == 9:
+                    pass
+
+    temperature_offsets = [-90.0, -55.0, -25.0, 0.0, 25.0, 55.0, 90.0]
+    for _ in range(temperature_count):
+        enrichment = float(rng.uniform(0.038, LEU_MAX_ENRICHMENT))
+        uf4_mol_frac = float(rng.uniform(0.03, 0.045))
+        reference_temperature = float(rng.uniform(860.0, 940.0))
+        fuel_volume_fraction = float(rng.uniform(0.20, 0.25))
+        aspect_ratio = float(rng.uniform(1.7, 2.4))
+        critical = find_critical_radius_v2(
+            k_target=1.0,
+            aspect_ratio=aspect_ratio,
+            enrichment=enrichment,
+            uf4_mol_frac=uf4_mol_frac,
+            temperature_k=reference_temperature,
+            water_vol_frac=0.0,
+            fuel_volume_fraction=fuel_volume_fraction,
+        )
+        offset = float(rng.choice(temperature_offsets))
+        temperature_k = float(np.clip(reference_temperature + offset, 780.0, 1075.0))
+        radius_cm = critical["critical_radius_cm"] * float(rng.uniform(0.97, 1.03))
+        add_targeted_case(
+            {
+                "enrichment": enrichment,
+                "uf4_mol_frac": uf4_mol_frac,
+                "radius_cm": radius_cm,
+                "height_cm": aspect_ratio * radius_cm,
+                "temperature_k": temperature_k,
+                "water_vol_frac": 0.0,
+                "fuel_volume_fraction": fuel_volume_fraction,
+                "sample_metadata": {
+                    "sampling_strategy": "temperature_reactivity_band",
+                    "sample_family": "temperature_sensitive",
+                    "reference_temperature_K": reference_temperature,
+                    "temperature_offset_K": offset,
+                    "critical_radius_cm": critical["critical_radius_cm"],
+                },
+            }
+        )
+
+    for _ in range(leakage_count):
+        enrichment = float(rng.uniform(0.04, LEU_MAX_ENRICHMENT))
+        uf4_mol_frac = float(rng.uniform(0.03, 0.05))
+        temperature_k = float(rng.uniform(840.0, 980.0))
+        fuel_volume_fraction = float(rng.uniform(0.18, 0.24))
+        aspect_ratio = float(rng.uniform(1.1, 3.2))
+        critical = find_critical_radius_v2(
+            k_target=1.0,
+            aspect_ratio=aspect_ratio,
+            enrichment=enrichment,
+            uf4_mol_frac=uf4_mol_frac,
+            temperature_k=temperature_k,
+            water_vol_frac=0.0,
+            fuel_volume_fraction=fuel_volume_fraction,
+        )
+        radius_cm = critical["critical_radius_cm"] * float(rng.uniform(0.90, 1.02))
+        add_targeted_case(
+            {
+                "enrichment": enrichment,
+                "uf4_mol_frac": uf4_mol_frac,
+                "radius_cm": radius_cm,
+                "height_cm": aspect_ratio * radius_cm,
+                "temperature_k": temperature_k,
+                "water_vol_frac": 0.0,
+                "fuel_volume_fraction": fuel_volume_fraction,
+                "sample_metadata": {
+                    "sampling_strategy": "leakage_sensitive_geometry",
+                    "sample_family": "boundary_sensitive",
+                    "aspect_ratio": aspect_ratio,
+                    "critical_radius_cm": critical["critical_radius_cm"],
+                },
+            }
+        )
+
+    for _ in range(edge_count):
+        hot_edge = bool(rng.integers(0, 2))
+        temperature_k = float(rng.uniform(1020.0, 1080.0) if hot_edge else rng.uniform(780.0, 830.0))
+        radius_cm = float(rng.uniform(42.0, 120.0))
+        aspect_ratio = float(rng.uniform(1.2, 3.0))
+        add_targeted_case(
+            {
+                "enrichment": float(rng.uniform(LEU_MIN_ENRICHMENT, LEU_MAX_ENRICHMENT)),
+                "uf4_mol_frac": float(rng.uniform(0.025, 0.05)),
+                "radius_cm": radius_cm,
+                "height_cm": aspect_ratio * radius_cm,
+                "temperature_k": temperature_k,
+                "water_vol_frac": float(rng.uniform(0.02, 0.05)),
+                "fuel_volume_fraction": float(rng.uniform(0.18, 0.28)),
+                "sample_metadata": {
+                    "sampling_strategy": "edge_case_extremes",
+                    "sample_family": "hard_case",
+                    "hot_edge": hot_edge,
+                },
+            }
+        )
+
+    while len(planned_params) < n_samples:
+        fallback = _latin_hypercube_samples(broad_bounds, 1, rng)[0]
+        fallback.update(
+            {
+                "nr": 20,
+                "nz": 30,
+                "reactor_mode": LEU_DESIGN_MODE,
+                "xs_model": "auto",
+                "sample_metadata": {
+                    "sampling_strategy": "broad_latin_hypercube",
+                    "sample_family": "broad_leu",
+                    "fallback_fill": True,
+                },
+            }
+        )
+        planned_params.append(fallback)
+
+    planned_params = planned_params[:n_samples]
+    for idx, params in enumerate(planned_params):
         result = evaluate_design_v2(**params)
         alpha = compute_temperature_coefficient_v2(
             {
@@ -1118,13 +1560,17 @@ def generate_dataset_v2(
                 "temperature_k": params["temperature_k"],
                 "water_vol_frac": params["water_vol_frac"],
                 "fuel_volume_fraction": params["fuel_volume_fraction"],
+                "reactor_mode": params["reactor_mode"],
+                "xs_model": params["xs_model"],
             },
-            dT=15.0,
+            dT=12.5,
         )
         result["alpha_T_pcm_per_K"] = alpha["alpha_pcm_per_K"]
+        result["alpha_T_details"] = alpha
         record = export_sample_record(result, sample_id=f"v2-{idx:04d}")
         records.append(record)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(_to_builtin(records), indent=2))
+    _write_dataset_manifest(output_path, records)
     return records
